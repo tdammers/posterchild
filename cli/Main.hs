@@ -3,6 +3,8 @@
 module Main where
 
 import Database.Posterchild
+import Database.Posterchild.Syntax.Abstract
+
 import Control.Monad (forM_)
 import qualified Data.Map as Map
 

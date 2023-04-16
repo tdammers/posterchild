@@ -14,7 +14,8 @@ import qualified Data.Set as Set
 import Data.Map (Map)
 import qualified Data.Map as Map
 
-import Database.Posterchild.AST
+import Database.Posterchild.Syntax.Common
+import Database.Posterchild.Syntax.Abstract
 
 data SqlTy
   = SqlIntT
