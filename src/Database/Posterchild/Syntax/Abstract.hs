@@ -4,25 +4,39 @@ module Database.Posterchild.Syntax.Abstract
 where
 
 import Data.Vector (Vector)
+import Data.Text (Text)
 
 import Database.Posterchild.Syntax.Common
 
 data SelectQuery =
   SelectQuery
-    { selectFrom :: !SelectSource
+    { selectFrom :: !SelectFrom
     , selectFields :: !SelectFields
-    , selectWhere :: !Where
+    , selectWhere :: !Expr
     }
   deriving (Show, Read, Eq)
 
-data Where
-  = WhereTrue
-  | WhereFalse
-  | WhereNull !Selectable
-  | WhereCompare !Comparison !Selectable !Selectable
-  | WhereNot !Where
-  | WhereAll !(Vector Where)
-  | WhereAny !(Vector Where)
+data Expr
+  = TrueE
+  | FalseE
+  | NullE
+  | LitE !Text
+  | ColumnE !ColumnRef
+  | AliasE !ColumnName
+  | ParamE !ParamName
+  | SubqueryE !SelectQuery
+  | IsNullE !Expr
+  | BinopE !Binop !Expr !Expr
+  | NotE !Expr
+  | AllE !(Vector Expr)
+  | AnyE !(Vector Expr)
+  deriving (Show, Read, Eq)
+
+data SelectFrom = 
+  SelectFrom
+    { selectFromSource :: !SelectSource
+    , selectFromAs :: !TableName
+    }
   deriving (Show, Read, Eq)
 
 data SelectSource
@@ -31,23 +45,13 @@ data SelectSource
   | SelectFromSubquery !SelectQuery
   deriving (Show, Read, Eq)
 
-data SelectFields
-  = SelectStar
-  | SelectFields !(Vector SelectField)
+newtype SelectFields
+  = SelectFields (Vector SelectField)
   deriving (Show, Read, Eq)
 
 data SelectField =
   SelectField
-    { selectFieldSelectable :: !Selectable
+    { selectFieldSelectable :: !Expr
     , selectFieldAlias :: !(Maybe ColumnName)
     }
   deriving (Show, Read, Eq)
-
-data Selectable
-  = SelectColumn !ColumnRef
-  | SelectAlias !ColumnName
-  | SelectValue !SqlValue
-  | SelectParam !ParamName
-  | SelectSubquery !SelectQuery
-  deriving (Show, Read, Eq)
-

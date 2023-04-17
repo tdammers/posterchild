@@ -1,24 +1,26 @@
-{-# LANGUAGE GeneralizedNewtypeDeriving #-}
 {-# LANGUAGE DerivingStrategies #-}
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE OverloadedLists #-}
-{-# LANGUAGE LambdaCase #-}
 
 module Database.Posterchild.TyCheck
 where
 
 import Data.Vector (Vector)
 import qualified Data.Vector as Vector
+import Data.Text (Text)
+import qualified Data.Text as Text
 import Data.Set (Set)
 import qualified Data.Set as Set
 import Data.Map (Map)
 import qualified Data.Map as Map
+import Data.Char (isDigit)
 
 import Database.Posterchild.Syntax.Common
 import Database.Posterchild.Syntax.Abstract
 
 data SqlTy
-  = SqlIntT
+  = SqlBoolT
+  | SqlIntT
   | SqlTextT
   | SqlBytesT
   deriving (Show, Read, Eq, Ord, Enum, Bounded)
@@ -30,194 +32,217 @@ data QueryConstraint
   deriving (Show, Read, Eq)
 
 data Ty
-  = MonoTy SqlTy
+  = NullTy
+  | MonoTy SqlTy
   | ColumnTyRef !ColumnRef
   | ParamTyRef !ParamName
-  deriving (Show, Read, Eq)
+  deriving (Show, Read, Eq, Ord)
 
 type AliasTable =
-  Map ColumnName Selectable
+  Map ColumnName Expr
 
-resolveAlias :: AliasTable -> ColumnName -> Maybe Selectable
+resolveAlias :: AliasTable -> ColumnName -> Either String Expr
 resolveAlias aliases alias =
   case Map.lookup alias aliases of
     Nothing ->
-      Nothing
-    Just (SelectAlias alias') ->
-      resolveAlias aliases alias'
+      return $ AliasE alias
+    Just (AliasE alias') ->
+      if alias' == alias then
+        return $ AliasE alias
+      else
+        resolveAlias aliases alias'
     Just x ->
-      Just x
+      return x
 
 getQueryAliases :: SelectQuery -> AliasTable
 getQueryAliases q =
   let fieldAliases = case selectFields q of
-        SelectStar -> error "This doesn't work yet"
         SelectFields fields -> do
           Vector.foldl (<>) [] (Vector.map getSelectFieldAliases fields)
-      whereAliases = getWhereAliases $ selectWhere q
+      whereAliases = getExprAliases $ selectWhere q
   in fieldAliases <> whereAliases
 
-getWhereAliases :: Where -> AliasTable
-getWhereAliases (WhereCompare _ a b) =
-  getSelectableAliases a <> getSelectableAliases b
-getWhereAliases (WhereNot w) =
-  getWhereAliases w
-getWhereAliases (WhereAll ws) =
-  Vector.foldl (<>) [] $ Vector.map getWhereAliases ws
-getWhereAliases (WhereAny ws) =
-  Vector.foldl (<>) [] $ Vector.map getWhereAliases ws
-getWhereAliases (WhereNull selectable) =
-  getSelectableAliases selectable
-getWhereAliases _ = []
-
-getSelectableAliases :: Selectable -> AliasTable
-getSelectableAliases (SelectSubquery s) = getQueryAliases s
-getSelectableAliases _ = []
+getExprAliases :: Expr -> AliasTable
+getExprAliases (BinopE _ a b) =
+  getExprAliases a <> getExprAliases b
+getExprAliases (NotE w) =
+  getExprAliases w
+getExprAliases (AllE ws) =
+  Vector.foldl (<>) [] $ Vector.map getExprAliases ws
+getExprAliases (AnyE ws) =
+  Vector.foldl (<>) [] $ Vector.map getExprAliases ws
+getExprAliases (IsNullE selectable) =
+  getExprAliases selectable
+getExprAliases (SubqueryE s) =
+  getQueryAliases s
+getExprAliases _ =
+  []
 
 getSelectFieldAliases :: SelectField -> AliasTable
 getSelectFieldAliases (SelectField _ Nothing) = []
 getSelectFieldAliases (SelectField selectable (Just alias)) =
-  [(alias, selectable)] <> getSelectableAliases selectable
+  [(alias, selectable)] <> getExprAliases selectable
 
-getSelectableType :: AliasTable -> Selectable -> Maybe Ty
-getSelectableType _ (SelectColumn colref) =
+{- HLINT ignore "Use record patterns" -}
+
+getExprType :: AliasTable -> Expr -> Either String Ty
+getExprType _ TrueE = return (MonoTy SqlBoolT)
+getExprType _ FalseE = return (MonoTy SqlBoolT)
+getExprType _ NullE = return NullTy
+getExprType _ (IsNullE _) = return (MonoTy SqlBoolT)
+getExprType _ (BinopE _ _ _) =
+  return (MonoTy SqlBoolT)
+getExprType _ (NotE _) =
+  return (MonoTy SqlBoolT)
+getExprType _ (AllE _) =
+  return (MonoTy SqlBoolT)
+getExprType _ (AnyE _) =
+  return (MonoTy SqlBoolT)
+getExprType _ (ColumnE colref) =
   return $ ColumnTyRef colref
-getSelectableType aliases (SelectAlias a) = do
-  selectable <- Map.lookup a aliases
-  getSelectableType aliases selectable
-getSelectableType _ (SelectValue v) =
-  Just $ getValueType v
-getSelectableType _ (SelectParam p) =
-  Just $ ParamTyRef p
-getSelectableType aliases (SelectSubquery s) = do
+getExprType aliases (AliasE a) = do
+  case Map.lookup a aliases of
+    Nothing ->
+      Left $ "Alias does not resolve: " ++ show a
+    Just selectable ->
+      getExprType aliases selectable
+getExprType _ (LitE v) =
+  return $ getLitType v
+getExprType _ (ParamE p) =
+  return $ ParamTyRef p
+getExprType aliases (SubqueryE s) = do
   subResults <- getQueryResultType aliases s
   case subResults of
-    [ty] -> Just ty
-    _ -> Nothing
+    [ty] -> return ty
+    _ -> Left $ "Incorrect subquery result type, subquery must return exactly one column"
 
-getQueryResultType :: AliasTable -> SelectQuery -> Maybe (Vector Ty)
+getQueryResultType :: AliasTable -> SelectQuery -> Either String (Vector Ty)
 getQueryResultType aliases q =
   case selectFields q of
-    SelectStar ->
-      error "This doesn't work yet"
     SelectFields fields -> do
-      Vector.forM fields $ getSelectableType aliases . selectFieldSelectable
+      Vector.forM fields $ getExprType aliases . selectFieldSelectable
 
 getValueType :: SqlValue -> Ty
 getValueType (SqlInt _) = MonoTy SqlIntT
 getValueType (SqlText _) = MonoTy SqlTextT
 getValueType (SqlBytes _) = MonoTy SqlBytesT
 
-getQueryConstraints :: AliasTable -> SelectQuery -> Vector QueryConstraint
-getQueryConstraints aliases q =
-  mconcat
+getLitType :: Text -> Ty
+getLitType t
+  | Text.all isDigit t
+  = MonoTy SqlIntT
+  | otherwise
+  = MonoTy SqlTextT
+
+getQueryConstraints :: AliasTable -> SelectQuery -> Either String (Vector QueryConstraint)
+getQueryConstraints aliases q = do
+  tyConstraints <- getTypeConstraints aliases q
+  return $ mconcat
     [ Vector.map TableExists . Vector.fromList . Set.toList $ getRequiredTables q
     , Vector.map ColumnExists . Vector.fromList . Set.toList $ getRequiredColumns q
-    , getTypeConstraints aliases q
+    , tyConstraints
     ]
 
-getTypeConstraints :: AliasTable -> SelectQuery -> Vector QueryConstraint
-getTypeConstraints aliases q =
-  let fromConstrs = case selectFrom q of
+getTypeConstraints :: AliasTable -> SelectQuery -> Either String (Vector QueryConstraint)
+getTypeConstraints aliases q = do
+  fromConstrs <- case selectFromSource (selectFrom q) of
                       SelectFromSubquery s ->
                         getTypeConstraints aliases s
                       _ ->
-                        []
-      fieldConstrs = case selectFields q of
-        SelectStar ->
-          error "This doesn't work yet"
-        SelectFields fields ->
-          Vector.foldl (<>) [] $ Vector.map (getSelectableTypeConstraints aliases . selectFieldSelectable) fields
-      whereConstrs = getWhereTypeConstraints aliases $ selectWhere q
-  in fromConstrs <> fieldConstrs <> whereConstrs
+                        return []
+  fieldConstrs <- case selectFields q of
+    SelectFields fields ->
+      Vector.foldl (<>) [] <$>
+        Vector.mapM (getExprTypeConstraints aliases . selectFieldSelectable) fields
+  whereConstrs <- getExprTypeConstraints aliases $ selectWhere q
+  return $ fromConstrs <> fieldConstrs <> whereConstrs
 
-getWhereTypeConstraints :: AliasTable -> Where -> Vector QueryConstraint
-getWhereTypeConstraints aliases (WhereCompare _ a b) =
-  let result = (,) <$> getSelectableType aliases a <*> getSelectableType aliases b
-  in case result of
-    Nothing ->
-      []
-    Just (aTy, bTy) ->
-      [CompatibleTypes aTy bTy]
-getWhereTypeConstraints aliases (WhereNot w) =
-  getWhereTypeConstraints aliases w
-getWhereTypeConstraints aliases (WhereAll ws) =
-  Vector.concatMap (getWhereTypeConstraints aliases) ws
-getWhereTypeConstraints aliases (WhereAny ws) =
-  Vector.concatMap (getWhereTypeConstraints aliases) ws
-getWhereTypeConstraints _ _ = []
-
-getSelectableTypeConstraints :: AliasTable -> Selectable -> Vector QueryConstraint
-getSelectableTypeConstraints aliases (SelectSubquery s) =
+getExprTypeConstraints :: AliasTable -> Expr -> Either String (Vector QueryConstraint)
+getExprTypeConstraints aliases (BinopE op a b) = do
+  subConstraints <-
+      (<>) <$> getExprTypeConstraints aliases a
+           <*> getExprTypeConstraints aliases b
+  (aTy, bTy) <- (,) <$> getExprType aliases a <*> getExprType aliases b
+  immediateConstraints <-
+    case op of
+      Equals -> return [CompatibleTypes aTy bTy]
+      NotEquals -> return [CompatibleTypes aTy bTy]
+      Less -> return [CompatibleTypes aTy bTy]
+      Greater -> return [CompatibleTypes aTy bTy]
+  return $ subConstraints <> immediateConstraints
+getExprTypeConstraints aliases (NotE w) =
+  getExprTypeConstraints aliases w
+getExprTypeConstraints aliases (AllE ws) =
+  Vector.foldl (<>) [] <$> Vector.mapM (getExprTypeConstraints aliases) ws
+getExprTypeConstraints aliases (AnyE ws) =
+  Vector.foldl (<>) [] <$> Vector.mapM (getExprTypeConstraints aliases) ws
+getExprTypeConstraints aliases (SubqueryE s) =
   getQueryConstraints aliases s
-getSelectableTypeConstraints _ _ = []
+getExprTypeConstraints _ _ =
+  return []
 
 getRequiredTables :: SelectQuery -> Set TableName
 getRequiredTables q =
-  let requiredFrom = case selectFrom q of
+  let requiredFrom = case selectFromSource (selectFrom q) of
         SelectFromDual -> []
         SelectFromTable n -> [n]
         SelectFromSubquery s -> getRequiredTables s
       requiredFields = getFieldsRequiredTables $ selectFields q
-      requiredWhere = getWhereRequiredTables $ selectWhere q
+      requiredWhere = getExprRequiredTables $ selectWhere q
   in requiredFrom <> requiredFields <> requiredWhere
-
-getWhereRequiredTables :: Where -> Set TableName
-getWhereRequiredTables (WhereCompare _ a b) =
-  getSelectableRequiredTables a <> getSelectableRequiredTables b
-getWhereRequiredTables (WhereAll ws) =
-  Vector.foldl (<>) [] $ Vector.map getWhereRequiredTables ws
-getWhereRequiredTables (WhereAny ws) =
-  Vector.foldl (<>) [] $ Vector.map getWhereRequiredTables ws
-getWhereRequiredTables (WhereNot w) =
-  getWhereRequiredTables w
-getWhereRequiredTables _ =
-  []
 
 getFieldsRequiredTables :: SelectFields -> Set TableName
 getFieldsRequiredTables (SelectFields fields) =
   Vector.foldl (<>) [] $ Vector.map getFieldRequiredTables fields
-getFieldsRequiredTables SelectStar = []
 
-getSelectableRequiredTables :: Selectable -> Set TableName
-getSelectableRequiredTables = \case
-  SelectColumn (ColumnRef tn _) -> [tn]
-  SelectSubquery s -> getRequiredTables s
-  _ -> []
+getExprRequiredTables :: Expr -> Set TableName
+getExprRequiredTables (BinopE _ a b) =
+  getExprRequiredTables a <> getExprRequiredTables b
+getExprRequiredTables (AllE ws) =
+  Vector.foldl (<>) [] $ Vector.map getExprRequiredTables ws
+getExprRequiredTables (AnyE ws) =
+  Vector.foldl (<>) [] $ Vector.map getExprRequiredTables ws
+getExprRequiredTables (IsNullE w) =
+  getExprRequiredTables w
+getExprRequiredTables (NotE w) =
+  getExprRequiredTables w
+getExprRequiredTables (ColumnE (ColumnRef tn _)) =
+  [tn]
+getExprRequiredTables (SubqueryE s) =
+  getRequiredTables s
+getExprRequiredTables _ =
+  []
 
 getFieldRequiredTables :: SelectField -> Set TableName
 getFieldRequiredTables field =
-  getSelectableRequiredTables (selectFieldSelectable field)
+  getExprRequiredTables (selectFieldSelectable field)
 
 getRequiredColumns :: SelectQuery -> Set ColumnRef
 getRequiredColumns q =
-  let fromColumns = case selectFrom q of
+  let fromColumns = case selectFromSource (selectFrom q) of
         SelectFromSubquery s -> getRequiredColumns s
         _ -> []
       fromFields = case selectFields q of
         SelectFields fields -> Vector.foldl (<>) [] $ Vector.map getFieldRequiredColumns fields
-        _ -> []
-      fromWhere = getWhereRequiredColumns $ selectWhere q
+      fromWhere = getExprRequiredColumns $ selectWhere q
   in fromColumns <> fromFields <> fromWhere
-
-getWhereRequiredColumns :: Where -> Set ColumnRef
-getWhereRequiredColumns (WhereCompare _ a b) =
-  getSelectableRequiredColumns a <> getSelectableRequiredColumns b
-getWhereRequiredColumns (WhereAll ws) =
-  Vector.foldl (<>) [] $ Vector.map getWhereRequiredColumns ws
-getWhereRequiredColumns (WhereAny ws) =
-  Vector.foldl (<>) [] $ Vector.map getWhereRequiredColumns ws
-getWhereRequiredColumns (WhereNot w) =
-  getWhereRequiredColumns w
-getWhereRequiredColumns _ =
-  []
 
 getFieldRequiredColumns :: SelectField -> Set ColumnRef
 getFieldRequiredColumns field =
-  getSelectableRequiredColumns $ selectFieldSelectable field
+  getExprRequiredColumns $ selectFieldSelectable field
 
-getSelectableRequiredColumns :: Selectable -> Set ColumnRef
-getSelectableRequiredColumns = \case
-  SelectColumn colref -> [colref]
-  SelectSubquery s -> getRequiredColumns s
-  _ -> []
+getExprRequiredColumns :: Expr -> Set ColumnRef
+getExprRequiredColumns (BinopE _ a b) =
+  getExprRequiredColumns a <> getExprRequiredColumns b
+getExprRequiredColumns (AllE ws) =
+  Vector.foldl (<>) [] $ Vector.map getExprRequiredColumns ws
+getExprRequiredColumns (AnyE ws) =
+  Vector.foldl (<>) [] $ Vector.map getExprRequiredColumns ws
+getExprRequiredColumns (NotE w) =
+  getExprRequiredColumns w
+getExprRequiredColumns (ColumnE colref) =
+  [colref]
+getExprRequiredColumns (SubqueryE s) =
+  getRequiredColumns s
+getExprRequiredColumns _ =
+  []

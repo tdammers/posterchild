@@ -1,47 +1,37 @@
 {-# LANGUAGE OverloadedStrings #-}
-{-# LANGUAGE OverloadedLists #-}
 module Main where
 
-import Database.Posterchild
-import Database.Posterchild.Syntax.Abstract
-
+import qualified Data.Vector as Vector
 import Control.Monad (forM_)
 import qualified Data.Map as Map
+import Text.Printf
 
-query :: SelectQuery
-query =
-  SelectQuery
-    { selectFrom = SelectFromTable "posts"
-    , selectFields = SelectFields
-        [ SelectField (SelectColumn (ColumnRef "posts" "id")) Nothing
-        , SelectField (SelectColumn (ColumnRef "posts" "title")) Nothing
-        , SelectField (SelectColumn (ColumnRef "posts" "body")) (Just "body")
-        , SelectField (SelectParam "foobar") Nothing
-        , SelectField (SelectValue $ SqlInt 23) (Just "twenty_three")
-        , SelectField (SelectSubquery $
-            SelectQuery
-              { selectFrom = SelectFromTable "users"
-              , selectFields = SelectFields
-                [ SelectField (SelectColumn (ColumnRef "users" "username")) (Just "username")
-                ]
-              , selectWhere =
-                  WhereCompare
-                    Equals
-                    (SelectColumn (ColumnRef "users" "id"))
-                    (SelectColumn (ColumnRef "posts" "user_id"))
-              }
-            ) (Just "username")
-        ]
-    , selectWhere = WhereTrue
-    }
+import Database.Posterchild
+import Database.Posterchild.Parser
 
 main :: IO ()
 main = do
+  query <- parseSelect
+            "<<QUERY>>" $
+            "select posts.id as post_id " ++
+            " , (select users.username from users where users.id = posts.user_id) as username " ++
+            " , posts.title " ++
+            " , posts.body " ++
+            " from posts" ++
+            " where posts.user_id = 1"
   let aliases = getQueryAliases query
   putStrLn "--- aliases ---"
-  forM_ (Map.toList aliases) $ \(name, val) -> do
-    print (name, val)
+  forM_ (Map.toList aliases) $ \(ColumnName name, val) -> do
+    printf "%s -> %s\n" name (show val)
   putStrLn "--- constraints ---"
-  forM_ (getQueryConstraints aliases query) print
+  case getQueryConstraints aliases query of
+    Left err ->
+      putStrLn $ "TYPE ERROR: " ++ err
+    Right constraints ->
+      Vector.mapM_ print constraints
   putStrLn "--- result type ---"
-  print (getQueryResultType aliases query)
+  case getQueryResultType aliases query of
+    Left err ->
+      putStrLn $ "TYPE ERROR: " ++ err
+    Right rty ->
+      Vector.mapM_ print rty

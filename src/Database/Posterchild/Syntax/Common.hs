@@ -30,7 +30,7 @@ data SqlValue
   | SqlBytes ByteString
   deriving (Show, Read, Eq)
 
-data Comparison
+data Binop
   = Equals
   | NotEquals
   | Less
