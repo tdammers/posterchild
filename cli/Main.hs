@@ -1,9 +1,7 @@
 {-# LANGUAGE OverloadedStrings #-}
 module Main where
 
-import qualified Data.Vector as Vector
 import Control.Monad (forM_)
-import qualified Data.Map as Map
 import Text.Printf
 
 import Database.Posterchild
@@ -11,27 +9,24 @@ import Database.Posterchild.Parser
 
 main :: IO ()
 main = do
-  query <- parseSelect
-            "<<QUERY>>" $
+  putStrLn "--- input ---"
+  let queryStr = 
             "select posts.id as post_id " ++
             " , (select users.username from users where users.id = posts.user_id) as username " ++
             " , posts.title " ++
             " , posts.body " ++
             " from posts" ++
-            " where posts.user_id = 1"
-  let aliases = getQueryAliases query
-  putStrLn "--- aliases ---"
-  forM_ (Map.toList aliases) $ \(ColumnName name, val) -> do
-    printf "%s -> %s\n" name (show val)
-  putStrLn "--- constraints ---"
-  case getQueryConstraints aliases query of
-    Left err ->
-      putStrLn $ "TYPE ERROR: " ++ err
-    Right constraints ->
-      Vector.mapM_ print constraints
+            " where posts.user_id = 1 and posts.role = $1"
+  putStrLn queryStr
+  query <- parseSelect "<<QUERY>>" queryStr
+  putStrLn "--- AST ---"
+  print query
+  queryT <- either (error . show) return $ runTC $ tcSelectQuery query
+  putStrLn "--- params ---"
+  forM_ (selectQueryParamsTy queryT) $ \(ParamName name, ty) ->
+    printf "$%s : %s\n" name (show ty)
   putStrLn "--- result type ---"
-  case getQueryResultType aliases query of
-    Left err ->
-      putStrLn $ "TYPE ERROR: " ++ err
-    Right rty ->
-      Vector.mapM_ print rty
+  forM_ (selectQueryResultTy queryT) $ \(ColumnName name, ty) ->
+    printf "%s : %s\n" name (show ty)
+  putStrLn "--- constraints ---"
+  mapM_ print $ selectQueryConstraintsTy queryT

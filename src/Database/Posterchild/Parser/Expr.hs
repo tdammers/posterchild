@@ -19,6 +19,28 @@ sqlExprP :: Parser s Expr
 sqlExprP = label "expression" $ do
   notFollowedBy (keywordP "as")
   notFollowedBy (keywordP "where")
+  andExprP
+
+andExprP :: Parser s Expr
+andExprP = do
+  lhs <- orExprP
+  tails <- many $
+    keywordP "and" *> orExprP
+  case tails of
+    [] -> return lhs
+    _ -> return $ FoldE All $ Vector.fromList (lhs : tails)
+
+orExprP :: Parser s Expr
+orExprP = do
+  lhs <- compExprP
+  tails <- many $
+    keywordP "or" *> orExprP
+  case tails of
+    [] -> return lhs
+    _ -> return $ FoldE Any $ Vector.fromList (lhs : tails)
+
+compExprP :: Parser s Expr
+compExprP = label "comparative expression" $ do
   lhs <- appExprP
   opMay <- optional binopP
   case opMay of
@@ -30,8 +52,13 @@ sqlExprP = label "expression" $ do
 
 binopP :: Parser s Binop
 binopP =
-  label "binary operator" $
-  Equals <$ string "=" <* whitespaceP
+  label "binary operator" $ choice
+    [ Equals <$ string "="
+    , NotEquals <$ string "<>"
+    , Less <$ string "<"
+    , Greater <$ string ">"
+    ]
+    <* whitespaceP
 
 appExprP :: Parser s Expr
 appExprP = typedExprP
@@ -59,7 +86,7 @@ nullExprP :: Parser s Expr
 nullExprP = NullE <$ keywordP "null" <?> "null"
 
 paramExprP :: Parser s Expr
-paramExprP = ParamE . read <$> (char '$' *> uintLitP <* whitespaceP) <?> "parameter"
+paramExprP = ParamE . ParamName . Text.pack <$> (char '$' *> uintLitP <* whitespaceP) <?> "parameter"
 
 litExprP :: Parser s Expr
 litExprP = do
@@ -78,7 +105,7 @@ refExprP = label "column reference" $ do
   parts <- identifierPartsP
   case parts of
     [] -> fail "This won't happen"
-    [name] -> return $ AliasE (ColumnName name)
-    [ns,name] -> return $ ColumnE (ColumnRef (TableName ns) (ColumnName name))
+    [name] -> return $ RefE Nothing (ColumnName name)
+    [ns,name] -> return $ RefE (Just $ TableName ns) (ColumnName name)
     xs -> fail $ "Name too long: " ++ show xs
 

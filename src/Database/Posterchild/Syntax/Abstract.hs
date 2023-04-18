@@ -11,47 +11,51 @@ import Database.Posterchild.Syntax.Common
 data SelectQuery =
   SelectQuery
     { selectFrom :: !SelectFrom
-    , selectFields :: !SelectFields
+    , selectFields :: !(Vector SelectField)
     , selectWhere :: !Expr
     }
   deriving (Show, Read, Eq)
 
-data Expr
-  = TrueE
-  | FalseE
-  | NullE
-  | LitE !Text
-  | ColumnE !ColumnRef
-  | AliasE !ColumnName
-  | ParamE !ParamName
-  | SubqueryE !SelectQuery
-  | IsNullE !Expr
-  | BinopE !Binop !Expr !Expr
-  | NotE !Expr
-  | AllE !(Vector Expr)
-  | AnyE !(Vector Expr)
-  deriving (Show, Read, Eq)
-
-data SelectFrom = 
-  SelectFrom
-    { selectFromSource :: !SelectSource
-    , selectFromAs :: !TableName
-    }
-  deriving (Show, Read, Eq)
-
-data SelectSource
-  = SelectFromDual
-  | SelectFromTable !TableName
-  | SelectFromSubquery !SelectQuery
-  deriving (Show, Read, Eq)
-
-newtype SelectFields
-  = SelectFields (Vector SelectField)
-  deriving (Show, Read, Eq)
-
 data SelectField =
   SelectField
-    { selectFieldSelectable :: !Expr
-    , selectFieldAlias :: !(Maybe ColumnName)
+    { fieldExpr :: !Expr
+    , fieldAlias :: !(Maybe ColumnName)
     }
   deriving (Show, Read, Eq)
+
+data SelectFrom
+  = SelectFromSingle !Tabloid !(Maybe TableName)
+  | SelectJoin !JoinType !SelectFrom !SelectFrom !Expr
+  deriving (Show, Read, Eq)
+
+data Tabloid
+  = DualTabloid
+  | TableTabloid !TableName
+  | SubqueryTabloid !SelectQuery
+  deriving (Show, Read, Eq)
+
+data JoinType
+  = InnerJoin
+  | LeftOuterJoin
+  | RightOuterJoin
+  | FullOuterJoin
+  | CrossJoin
+  deriving (Show, Read, Eq)
+
+data Expr
+  = NullE
+  | BoolLitE !Bool
+  | IntLitE !Integer
+  | LitE !Text
+  | RefE !(Maybe TableName) !ColumnName
+  | ParamE !ParamName
+  | UnopE !Unop Expr
+  | BinopE !Binop !Expr !Expr
+  | FoldE !BoolOp !(Vector Expr)
+  | SubqueryE !SelectQuery
+  deriving (Show, Read, Eq)
+
+data BoolOp
+  = Any
+  | All
+  deriving (Show, Read, Eq, Ord, Enum, Bounded)

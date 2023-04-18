@@ -5,15 +5,16 @@
 module Database.Posterchild.TyCheck
 where
 
-import Data.Vector (Vector)
+import Control.Monad.State
+import Control.Monad.Except
+import Control.Monad (forM_)
+import Control.Applicative ( (<|>) )
 import qualified Data.Vector as Vector
 import Data.Text (Text)
-import qualified Data.Text as Text
 import Data.Set (Set)
-import qualified Data.Set as Set
 import Data.Map (Map)
 import qualified Data.Map as Map
-import Data.Char (isDigit)
+import Data.Maybe (fromMaybe)
 
 import Database.Posterchild.Syntax.Common
 import Database.Posterchild.Syntax.Abstract
@@ -29,220 +30,214 @@ data QueryConstraint
   = TableExists !TableName
   | ColumnExists !ColumnRef
   | CompatibleTypes !Ty !Ty
+  | ComparableTypes !Ty !Ty
   deriving (Show, Read, Eq)
 
 data Ty
   = NullTy
+    -- ^ The NULL type.
   | MonoTy SqlTy
-  | ColumnTyRef !ColumnRef
-  | ParamTyRef !ParamName
+    -- ^ A fully resolved monomorphic type
+  | ColumnRefTy !TableName !ColumnName
+    -- ^ A column reference that has been unambiguously resolved to a table
+    -- column
+  | AmbiguousColumnRefTy !ColumnName !(Set TableName)
+    -- ^ A column or alias reference that cannot be resolved without schema
+    -- information, and may point to one of several tables. In order for this
+    -- query to type check against a schema, exactly one of the tables listed
+    -- must have a column by the given name.
+  | ParamRefTy !ParamName
+    -- ^ A parameter reference
   deriving (Show, Read, Eq, Ord)
 
-type AliasTable =
-  Map ColumnName Expr
+data TCEnv =
+  TCEnv
+    { tceTableAliases :: Map TableName Tabloid
+    , tceColumnAliases :: Map ColumnName Expr
+    , tceConstraints :: [QueryConstraint]
+    }
 
-resolveAlias :: AliasTable -> ColumnName -> Either String Expr
-resolveAlias aliases alias =
-  case Map.lookup alias aliases of
-    Nothing ->
-      return $ AliasE alias
-    Just (AliasE alias') ->
-      if alias' == alias then
-        return $ AliasE alias
-      else
-        resolveAlias aliases alias'
-    Just x ->
-      return x
+emptyTCEnv :: TCEnv
+emptyTCEnv =
+  TCEnv
+    { tceTableAliases = []
+    , tceColumnAliases = []
+    , tceConstraints = []
+    }
 
-getQueryAliases :: SelectQuery -> AliasTable
-getQueryAliases q =
-  let fieldAliases = case selectFields q of
-        SelectFields fields -> do
-          Vector.foldl (<>) [] (Vector.map getSelectFieldAliases fields)
-      whereAliases = getExprAliases $ selectWhere q
-  in fieldAliases <> whereAliases
+data TypeError
+  = TypeErrorOther Text
+  | TypeErrorSubqueryColumnCount
+  | TypeErrorNotImplemented
+    -- ^ A subquery has the wrong number of columns. This happens when a
+    -- subquery is used in a column context, but returns no columns, or more
+    -- than one.
+  deriving (Show, Read, Eq)
 
-getExprAliases :: Expr -> AliasTable
-getExprAliases (BinopE _ a b) =
-  getExprAliases a <> getExprAliases b
-getExprAliases (NotE w) =
-  getExprAliases w
-getExprAliases (AllE ws) =
-  Vector.foldl (<>) [] $ Vector.map getExprAliases ws
-getExprAliases (AnyE ws) =
-  Vector.foldl (<>) [] $ Vector.map getExprAliases ws
-getExprAliases (IsNullE selectable) =
-  getExprAliases selectable
-getExprAliases (SubqueryE s) =
-  getQueryAliases s
-getExprAliases _ =
-  []
+type TC = ExceptT TypeError (State TCEnv)
 
-getSelectFieldAliases :: SelectField -> AliasTable
-getSelectFieldAliases (SelectField _ Nothing) = []
-getSelectFieldAliases (SelectField selectable (Just alias)) =
-  [(alias, selectable)] <> getExprAliases selectable
+runTC :: TC a -> Either TypeError a
+runTC action =
+  evalState (runExceptT action) emptyTCEnv
 
-{- HLINT ignore "Use record patterns" -}
+data SelectQueryTy =
+  SelectQueryTy
+    { selectQueryParamsTy :: [(ParamName, Ty)]
+    , selectQueryResultTy :: [(ColumnName, Ty)]
+    , selectQueryConstraintsTy :: [QueryConstraint]
+    }
+  deriving (Show, Read, Eq)
 
-getExprType :: AliasTable -> Expr -> Either String Ty
-getExprType _ TrueE = return (MonoTy SqlBoolT)
-getExprType _ FalseE = return (MonoTy SqlBoolT)
-getExprType _ NullE = return NullTy
-getExprType _ (IsNullE _) = return (MonoTy SqlBoolT)
-getExprType _ (BinopE _ _ _) =
-  return (MonoTy SqlBoolT)
-getExprType _ (NotE _) =
-  return (MonoTy SqlBoolT)
-getExprType _ (AllE _) =
-  return (MonoTy SqlBoolT)
-getExprType _ (AnyE _) =
-  return (MonoTy SqlBoolT)
-getExprType _ (ColumnE colref) =
-  return $ ColumnTyRef colref
-getExprType aliases (AliasE a) = do
-  case Map.lookup a aliases of
-    Nothing ->
-      Left $ "Alias does not resolve: " ++ show a
-    Just selectable ->
-      getExprType aliases selectable
-getExprType _ (LitE v) =
-  return $ getLitType v
-getExprType _ (ParamE p) =
-  return $ ParamTyRef p
-getExprType aliases (SubqueryE s) = do
-  subResults <- getQueryResultType aliases s
-  case subResults of
-    [ty] -> return ty
-    _ -> Left $ "Incorrect subquery result type, subquery must return exactly one column"
+tcSelectQuery :: SelectQuery -> TC SelectQueryTy
+tcSelectQuery q = do
+  getTableAliases (selectFrom q)
+  getColumnAliases q
+  paramNames <- getParamNames q
+  let params = [ (pname, ParamRefTy pname) | pname <- paramNames ]
+  resultTy <- getResultTy q
+  whereTy <- getExprTy (selectWhere q)
+  addConstraint $ CompatibleTypes (MonoTy SqlBoolT) whereTy
+  constraints <- gets (cullConstraints . tceConstraints)
 
-getQueryResultType :: AliasTable -> SelectQuery -> Either String (Vector Ty)
-getQueryResultType aliases q =
-  case selectFields q of
-    SelectFields fields -> do
-      Vector.forM fields $ getExprType aliases . selectFieldSelectable
+  return SelectQueryTy
+    { selectQueryParamsTy = params
+    , selectQueryResultTy = resultTy
+    , selectQueryConstraintsTy = constraints
+    }
 
-getValueType :: SqlValue -> Ty
-getValueType (SqlInt _) = MonoTy SqlIntT
-getValueType (SqlText _) = MonoTy SqlTextT
-getValueType (SqlBytes _) = MonoTy SqlBytesT
+cullConstraints :: [QueryConstraint] -> [QueryConstraint]
+cullConstraints = filter (not . isRedundantConstraint)
 
-getLitType :: Text -> Ty
-getLitType t
-  | Text.all isDigit t
-  = MonoTy SqlIntT
+isRedundantConstraint :: QueryConstraint -> Bool
+isRedundantConstraint (CompatibleTypes a b)
+  | a == b
+  = True
+isRedundantConstraint _ = False
+
+getResultTy :: SelectQuery -> TC [(ColumnName, Ty)]
+getResultTy q = do
+  Vector.toList <$> Vector.mapM getResultColumn (selectFields q)
+
+getResultColumn :: SelectField -> TC (ColumnName, Ty)
+getResultColumn (SelectField expr aliasMay) = do
+  let name = fromMaybe "?" $ exprToColumnName expr <|> aliasMay
+  ty <- getExprTy expr
+  return (name, ty)
+
+exprToColumnName :: Expr -> Maybe ColumnName
+exprToColumnName (RefE Nothing cname) = Just cname
+exprToColumnName (RefE (Just (TableName tname)) (ColumnName cname)) =
+  Just (ColumnName $ tname <> "." <> cname)
+exprToColumnName (ParamE (ParamName pname)) =
+  Just $ ColumnName pname
+exprToColumnName _ = Nothing
+
+getExprTy :: Expr -> TC Ty
+getExprTy NullE =
+  return NullTy
+getExprTy (BoolLitE _) =
+  return $ MonoTy SqlBoolT
+getExprTy (IntLitE _) =
+  return $ MonoTy SqlIntT
+getExprTy (LitE _) =
+  return $ MonoTy SqlTextT
+getExprTy (RefE (Just tname) cname) =
+  return $ ColumnRefTy tname cname
+getExprTy (RefE Nothing _cname) =
+  throwError TypeErrorNotImplemented
+getExprTy (ParamE pname) =
+  return $ ParamRefTy pname
+getExprTy (UnopE Not e) = do
+  exprTy <- getExprTy e
+  addConstraint $ CompatibleTypes (MonoTy SqlBoolT) exprTy
+  return $ MonoTy SqlBoolT
+getExprTy (BinopE op a b)
+  | op `elem` ([Equals, NotEquals, Less, Greater] :: [Binop])
+  = do
+      aTy <- getExprTy a
+      bTy <- getExprTy b
+      addConstraint $ ComparableTypes aTy bTy
+      return $ MonoTy SqlBoolT
   | otherwise
-  = MonoTy SqlTextT
+  = throwError TypeErrorNotImplemented
+getExprTy (FoldE _ exprs) = do
+  exprTys <- Vector.toList <$> Vector.mapM getExprTy exprs
+  forM_ exprTys $ \exprTy -> do
+    addConstraint $ CompatibleTypes (MonoTy SqlBoolT) exprTy
+  return $ MonoTy SqlBoolT
+getExprTy (SubqueryE q) = do
+  qTy <- withLocalScope $ tcSelectQuery q
+  case selectQueryResultTy qTy of
+    [(_, ty)] -> return ty
+    _ -> throwError TypeErrorSubqueryColumnCount
 
-getQueryConstraints :: AliasTable -> SelectQuery -> Either String (Vector QueryConstraint)
-getQueryConstraints aliases q = do
-  tyConstraints <- getTypeConstraints aliases q
-  return $ mconcat
-    [ Vector.map TableExists . Vector.fromList . Set.toList $ getRequiredTables q
-    , Vector.map ColumnExists . Vector.fromList . Set.toList $ getRequiredColumns q
-    , tyConstraints
+withLocalScope :: MonadState s m => m a -> m a
+withLocalScope action = do
+  s <- get
+  action <* put s
+
+addTableAlias :: TableName -> Tabloid -> TC ()
+addTableAlias a tb =
+  modify $ \s -> s { tceTableAliases = Map.insert a tb $ tceTableAliases s }
+
+addColumnAlias :: ColumnName -> Expr -> TC ()
+addColumnAlias a expr =
+  modify $ \s -> s { tceColumnAliases = Map.insert a expr $ tceColumnAliases s }
+
+addConstraint :: QueryConstraint -> TC ()
+addConstraint c =
+  modify $ \s -> s { tceConstraints = c : tceConstraints s }
+
+getTableAliases :: SelectFrom -> TC ()
+getTableAliases from =
+  case from of
+    SelectFromSingle t (Just alias) -> addTableAlias alias t
+    SelectFromSingle _ _ -> return ()
+    SelectJoin _ a b _ -> getTableAliases a >> getTableAliases b
+
+getColumnAliases :: SelectQuery -> TC ()
+getColumnAliases q =
+  Vector.mapM_ getFieldAliases $ selectFields q
+  where
+    getFieldAliases :: SelectField -> TC ()
+    getFieldAliases (SelectField expr (Just alias)) = addColumnAlias alias expr
+    getFieldAliases _ = return ()
+
+getParamNames :: SelectQuery -> TC [ParamName]
+getParamNames q = do
+  pnamesFrom <- getParamNamesInFrom (selectFrom q)
+  pnamesFields <- mconcat . Vector.toList <$> Vector.mapM getParamNamesInField (selectFields q)
+  pnamesWhere <- getParamNamesInExpr (selectWhere q)
+  return $ pnamesFrom <> pnamesFields <> pnamesWhere
+
+getParamNamesInFrom :: SelectFrom -> TC [ParamName]
+getParamNamesInFrom (SelectFromSingle t _) =
+  getParamNamesInTabloid t
+getParamNamesInFrom (SelectJoin _ lhs rhs cond) = do
+  mconcat <$> sequence
+    [ getParamNamesInFrom lhs
+    , getParamNamesInFrom rhs
+    , getParamNamesInExpr cond
     ]
 
-getTypeConstraints :: AliasTable -> SelectQuery -> Either String (Vector QueryConstraint)
-getTypeConstraints aliases q = do
-  fromConstrs <- case selectFromSource (selectFrom q) of
-                      SelectFromSubquery s ->
-                        getTypeConstraints aliases s
-                      _ ->
-                        return []
-  fieldConstrs <- case selectFields q of
-    SelectFields fields ->
-      Vector.foldl (<>) [] <$>
-        Vector.mapM (getExprTypeConstraints aliases . selectFieldSelectable) fields
-  whereConstrs <- getExprTypeConstraints aliases $ selectWhere q
-  return $ fromConstrs <> fieldConstrs <> whereConstrs
-
-getExprTypeConstraints :: AliasTable -> Expr -> Either String (Vector QueryConstraint)
-getExprTypeConstraints aliases (BinopE op a b) = do
-  subConstraints <-
-      (<>) <$> getExprTypeConstraints aliases a
-           <*> getExprTypeConstraints aliases b
-  (aTy, bTy) <- (,) <$> getExprType aliases a <*> getExprType aliases b
-  immediateConstraints <-
-    case op of
-      Equals -> return [CompatibleTypes aTy bTy]
-      NotEquals -> return [CompatibleTypes aTy bTy]
-      Less -> return [CompatibleTypes aTy bTy]
-      Greater -> return [CompatibleTypes aTy bTy]
-  return $ subConstraints <> immediateConstraints
-getExprTypeConstraints aliases (NotE w) =
-  getExprTypeConstraints aliases w
-getExprTypeConstraints aliases (AllE ws) =
-  Vector.foldl (<>) [] <$> Vector.mapM (getExprTypeConstraints aliases) ws
-getExprTypeConstraints aliases (AnyE ws) =
-  Vector.foldl (<>) [] <$> Vector.mapM (getExprTypeConstraints aliases) ws
-getExprTypeConstraints aliases (SubqueryE s) =
-  getQueryConstraints aliases s
-getExprTypeConstraints _ _ =
+getParamNamesInTabloid :: Tabloid -> TC [ParamName]
+getParamNamesInTabloid (SubqueryTabloid q) =
+  getParamNames q
+getParamNamesInTabloid _ =
   return []
 
-getRequiredTables :: SelectQuery -> Set TableName
-getRequiredTables q =
-  let requiredFrom = case selectFromSource (selectFrom q) of
-        SelectFromDual -> []
-        SelectFromTable n -> [n]
-        SelectFromSubquery s -> getRequiredTables s
-      requiredFields = getFieldsRequiredTables $ selectFields q
-      requiredWhere = getExprRequiredTables $ selectWhere q
-  in requiredFrom <> requiredFields <> requiredWhere
+getParamNamesInField :: SelectField -> TC [ParamName]
+getParamNamesInField (SelectField expr _) =
+  getParamNamesInExpr expr
 
-getFieldsRequiredTables :: SelectFields -> Set TableName
-getFieldsRequiredTables (SelectFields fields) =
-  Vector.foldl (<>) [] $ Vector.map getFieldRequiredTables fields
-
-getExprRequiredTables :: Expr -> Set TableName
-getExprRequiredTables (BinopE _ a b) =
-  getExprRequiredTables a <> getExprRequiredTables b
-getExprRequiredTables (AllE ws) =
-  Vector.foldl (<>) [] $ Vector.map getExprRequiredTables ws
-getExprRequiredTables (AnyE ws) =
-  Vector.foldl (<>) [] $ Vector.map getExprRequiredTables ws
-getExprRequiredTables (IsNullE w) =
-  getExprRequiredTables w
-getExprRequiredTables (NotE w) =
-  getExprRequiredTables w
-getExprRequiredTables (ColumnE (ColumnRef tn _)) =
-  [tn]
-getExprRequiredTables (SubqueryE s) =
-  getRequiredTables s
-getExprRequiredTables _ =
-  []
-
-getFieldRequiredTables :: SelectField -> Set TableName
-getFieldRequiredTables field =
-  getExprRequiredTables (selectFieldSelectable field)
-
-getRequiredColumns :: SelectQuery -> Set ColumnRef
-getRequiredColumns q =
-  let fromColumns = case selectFromSource (selectFrom q) of
-        SelectFromSubquery s -> getRequiredColumns s
-        _ -> []
-      fromFields = case selectFields q of
-        SelectFields fields -> Vector.foldl (<>) [] $ Vector.map getFieldRequiredColumns fields
-      fromWhere = getExprRequiredColumns $ selectWhere q
-  in fromColumns <> fromFields <> fromWhere
-
-getFieldRequiredColumns :: SelectField -> Set ColumnRef
-getFieldRequiredColumns field =
-  getExprRequiredColumns $ selectFieldSelectable field
-
-getExprRequiredColumns :: Expr -> Set ColumnRef
-getExprRequiredColumns (BinopE _ a b) =
-  getExprRequiredColumns a <> getExprRequiredColumns b
-getExprRequiredColumns (AllE ws) =
-  Vector.foldl (<>) [] $ Vector.map getExprRequiredColumns ws
-getExprRequiredColumns (AnyE ws) =
-  Vector.foldl (<>) [] $ Vector.map getExprRequiredColumns ws
-getExprRequiredColumns (NotE w) =
-  getExprRequiredColumns w
-getExprRequiredColumns (ColumnE colref) =
-  [colref]
-getExprRequiredColumns (SubqueryE s) =
-  getRequiredColumns s
-getExprRequiredColumns _ =
-  []
+getParamNamesInExpr :: Expr -> TC [ParamName]
+getParamNamesInExpr (ParamE p) = return [p]
+getParamNamesInExpr (UnopE _ e) = getParamNamesInExpr e
+getParamNamesInExpr (BinopE _ a b) =
+  (<>) <$> getParamNamesInExpr a <*> getParamNamesInExpr b
+getParamNamesInExpr (FoldE _ exprs) =
+  mconcat . Vector.toList <$> Vector.mapM getParamNamesInExpr exprs
+getParamNamesInExpr (SubqueryE q) =
+  getParamNames q
+getParamNamesInExpr _ =
+  return []

@@ -4,16 +4,17 @@
 module Database.Posterchild.Parser.Select
 where
 
+import Data.Text (Text)
+import Data.Vector (Vector)
+import qualified Data.Vector as Vector
 import Text.Megaparsec
 import Text.Megaparsec.Char
-import qualified Data.Vector as Vector
-import Data.Text (Text)
-import qualified Data.Text as Text
+import Control.Monad (void)
 
-import Database.Posterchild.Syntax.Common
-import Database.Posterchild.Syntax.Abstract
 import Database.Posterchild.Parser.Common
 import Database.Posterchild.Parser.Expr
+import Database.Posterchild.Syntax.Abstract
+import Database.Posterchild.Syntax.Common
 
 parseSelect :: MonadFail m => String -> String -> m SelectQuery
 parseSelect filename input =
@@ -26,11 +27,11 @@ selectP =
   label "SELECT query" $ do
     fields <- string' "SELECT" *> whitespaceP *> selectFieldsP <* whitespaceP
     from <- string' "FROM" *> whitespaceP *> selectFromP <* whitespaceP
-    where_ <- option TrueE $ string' "WHERE" *> whitespaceP *> sqlExprP <* whitespaceP
+    where_ <- option (BoolLitE True) $ string' "WHERE" *> whitespaceP *> sqlExprP <* whitespaceP
     return $ SelectQuery from fields where_
 
-selectFieldsP :: Parser s SelectFields
-selectFieldsP = SelectFields . Vector.fromList <$>
+selectFieldsP :: Parser s (Vector SelectField)
+selectFieldsP = Vector.fromList <$>
   sepBy selectFieldP (string "," *> whitespaceP)
 
 selectFieldP :: Parser s SelectField
@@ -43,46 +44,47 @@ subqueryExprP :: Parser s Expr
 subqueryExprP = SubqueryE <$> subqueryP
 
 selectFromP :: Parser s SelectFrom
-selectFromP = do
-  source <- selectSourceP
+selectFromP = label "from" $ do
+  lhs <- simpleSourceP
+  tails <- many joinTail
+  return $ foldr ($) lhs tails
+  where
+    joinTail :: Parser s (SelectFrom -> SelectFrom)
+    joinTail = do
+      joinType <- joinTypeP
+      rhs <- simpleSourceP
+      void $ string' "ON"
+      whitespaceP
+      cond <- sqlExprP
+      return $ \lhs ->
+        SelectJoin joinType lhs rhs cond
+
+simpleSourceP :: Parser s SelectFrom
+simpleSourceP = do
+  source <- tabloidP
   aliasMay <- fmap TableName <$> aliasP
-  alias <- case (source, aliasMay) of
-    (_, Just alias) -> return alias
-    (SelectFromTable tn, Nothing) -> return tn
-    (_, _) -> fail $ "Alias required for select source: " ++ show source
-  return $ SelectFrom source alias
+  return $ SelectFromSingle source aliasMay
 
-selectSourceP :: Parser s SelectSource
-selectSourceP = label "selectable" $ do
-  simpleSourceP
-  -- lhs <- simpleSourceP
-  -- option lhs $ do
-  --   joinType <- joinTypeP
-  --   rhs <- selectSourceP
-  --   void $ string' "ON" <* whitespaceP
-  --   cond <- sqlExprP
-  --   return $ Join joinType lhs rhs cond
-
-simpleSourceP :: Parser s SelectSource
-simpleSourceP =
-  (SelectFromSubquery <$> subqueryP) <|>
-  (SelectFromTable <$> ((TableName <$> identifierP) <* whitespaceP))
+tabloidP :: Parser s Tabloid
+tabloidP = label "tabloid" $
+  (SubqueryTabloid <$> subqueryP) <|>
+  (TableTabloid <$> ((TableName <$> identifierP) <* whitespaceP))
 
 subqueryP :: Parser s SelectQuery
 subqueryP =
   label "subquery" $
-    (char '(' *> whitespaceP *> selectP <* char ')' <* whitespaceP)
+    char '(' *> whitespaceP *> selectP <* char ')' <* whitespaceP
 
 aliasP :: Parser s (Maybe Text)
 aliasP = optional $ do
   keywordP "as"
   whitespaceP *> identifierP <* whitespaceP
 
--- joinTypeP :: Parser s JoinType
--- joinTypeP = label "join type" $
---   choice
---     [ InnerJoin <$ (keywordP "INNER" *> keywordP "JOIN")
---     , LeftOuterJoin <$ (keywordP "LEFT" *> optional (keywordP "OUTER") *> keywordP "JOIN")
---     , RightOuterJoin <$ (keywordP "RIGHT" *> optional (keywordP "OUTER") *> keywordP "JOIN")
---     , FullOuterJoin <$ (keywordP "FULL" *> keywordP "OUTER" *> keywordP "JOIN")
---     ] <* whitespaceP
+joinTypeP :: Parser s JoinType
+joinTypeP = label "join type" $
+  choice
+    [ InnerJoin <$ (keywordP "INNER" *> keywordP "JOIN")
+    , LeftOuterJoin <$ (keywordP "LEFT" *> optional (keywordP "OUTER") *> keywordP "JOIN")
+    , RightOuterJoin <$ (keywordP "RIGHT" *> optional (keywordP "OUTER") *> keywordP "JOIN")
+    , FullOuterJoin <$ (keywordP "FULL" *> keywordP "OUTER" *> keywordP "JOIN")
+    ] <* whitespaceP

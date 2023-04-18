@@ -25,9 +25,10 @@ data ColumnRef =
   deriving (Show, Read, Eq, Ord)
 
 data SqlValue
-  = SqlText Text
-  | SqlInt Integer
-  | SqlBytes ByteString
+  = SqlBool !Bool
+  | SqlText !Text
+  | SqlInt !Integer
+  | SqlBytes !ByteString
   deriving (Show, Read, Eq)
 
 data Binop
@@ -37,3 +38,6 @@ data Binop
   | Greater
   deriving (Show, Read, Eq)
 
+data Unop
+  = Not
+  deriving (Show, Read, Eq)
