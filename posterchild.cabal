@@ -22,6 +22,7 @@ library
                    , Database.Posterchild.TyCheck
                    , Database.Posterchild.Syntax.Common
                    , Database.Posterchild.Syntax.Abstract
+                   , Database.Posterchild.Syntax.SqlTy
                    , Database.Posterchild.Parser
                    , Database.Posterchild.Parser.Common
                    , Database.Posterchild.Parser.Select

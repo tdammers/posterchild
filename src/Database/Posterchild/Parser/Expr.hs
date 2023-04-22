@@ -45,7 +45,7 @@ compExprP = label "comparative expression" $ do
   opMay <- optional binopP
   case opMay of
     Just op -> do
-      rhs <- sqlExprP
+      rhs <- compExprP
       return $ BinopE op lhs rhs
     Nothing ->
       return lhs
@@ -98,7 +98,7 @@ litCharP =
   satisfy (/= '\'')
 
 numLitExprP :: Parser s Expr
-numLitExprP = LitE <$> numLitP <* whitespaceP <?> "number literal"
+numLitExprP = IntLitE . read . Text.unpack <$> numLitP <* whitespaceP <?> "number literal"
 
 refExprP :: Parser s Expr
 refExprP = label "column reference" $ do

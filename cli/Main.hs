@@ -16,7 +16,9 @@ main = do
             " , posts.title " ++
             " , posts.body " ++
             " from posts" ++
-            " where posts.user_id = 1 and posts.role = $1"
+            " where posts.user_id = 1 " ++
+            " and posts.role = $1" ++
+            ""
   putStrLn queryStr
   query <- parseSelect "<<QUERY>>" queryStr
   putStrLn "--- AST ---"

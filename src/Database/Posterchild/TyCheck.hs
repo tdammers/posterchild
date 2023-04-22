@@ -5,31 +5,26 @@
 module Database.Posterchild.TyCheck
 where
 
-import Control.Monad.State
-import Control.Monad.Except
-import Control.Monad (forM_)
 import Control.Applicative ( (<|>) )
-import qualified Data.Vector as Vector
-import Data.Text (Text)
-import Data.Set (Set)
+import Control.Monad (forM_)
+import Control.Monad.Except
+import Control.Monad.State
+import Data.Int
 import Data.Map (Map)
 import qualified Data.Map as Map
 import Data.Maybe (fromMaybe)
+import Data.Text (Text)
+import qualified Data.Text as Text
+import qualified Data.Vector as Vector
 
-import Database.Posterchild.Syntax.Common
 import Database.Posterchild.Syntax.Abstract
-
-data SqlTy
-  = SqlBoolT
-  | SqlIntT
-  | SqlTextT
-  | SqlBytesT
-  deriving (Show, Read, Eq, Ord, Enum, Bounded)
+import Database.Posterchild.Syntax.Common
+import Database.Posterchild.Syntax.SqlTy
 
 data QueryConstraint
   = TableExists !TableName
   | ColumnExists !ColumnRef
-  | CompatibleTypes !Ty !Ty
+  | SubtypeOf !Ty !Ty
   | ComparableTypes !Ty !Ty
   deriving (Show, Read, Eq)
 
@@ -41,11 +36,6 @@ data Ty
   | ColumnRefTy !TableName !ColumnName
     -- ^ A column reference that has been unambiguously resolved to a table
     -- column
-  | AmbiguousColumnRefTy !ColumnName !(Set TableName)
-    -- ^ A column or alias reference that cannot be resolved without schema
-    -- information, and may point to one of several tables. In order for this
-    -- query to type check against a schema, exactly one of the tables listed
-    -- must have a column by the given name.
   | ParamRefTy !ParamName
     -- ^ A parameter reference
   deriving (Show, Read, Eq, Ord)
@@ -96,7 +86,7 @@ tcSelectQuery q = do
   let params = [ (pname, ParamRefTy pname) | pname <- paramNames ]
   resultTy <- getResultTy q
   whereTy <- getExprTy (selectWhere q)
-  addConstraint $ CompatibleTypes (MonoTy SqlBoolT) whereTy
+  addConstraint $ MonoTy SqlBooleanT `SubtypeOf` whereTy
   constraints <- gets (cullConstraints . tceConstraints)
 
   return SelectQueryTy
@@ -109,9 +99,8 @@ cullConstraints :: [QueryConstraint] -> [QueryConstraint]
 cullConstraints = filter (not . isRedundantConstraint)
 
 isRedundantConstraint :: QueryConstraint -> Bool
-isRedundantConstraint (CompatibleTypes a b)
-  | a == b
-  = True
+isRedundantConstraint (MonoTy a `SubtypeOf` MonoTy b)
+  = a `isSubtypeOf` b
 isRedundantConstraint _ = False
 
 getResultTy :: SelectQuery -> TC [(ColumnName, Ty)]
@@ -136,11 +125,23 @@ getExprTy :: Expr -> TC Ty
 getExprTy NullE =
   return NullTy
 getExprTy (BoolLitE _) =
-  return $ MonoTy SqlBoolT
-getExprTy (IntLitE _) =
-  return $ MonoTy SqlIntT
+  return $ MonoTy SqlBooleanT
+getExprTy (IntLitE i)
+  | i >= fromIntegral (minBound :: Int16)
+  , i <= fromIntegral (maxBound :: Int16)
+  = return $ MonoTy SqlSmallIntT
+getExprTy (IntLitE i)
+  | i >= fromIntegral (minBound :: Int32)
+  , i <= fromIntegral (maxBound :: Int32)
+  = return $ MonoTy SqlIntegerT
+getExprTy (IntLitE i)
+  | i >= fromIntegral (minBound :: Int64)
+  , i <= fromIntegral (maxBound :: Int64)
+  = return $ MonoTy SqlBigIntT
+getExprTy (IntLitE _)
+  = return $ MonoTy SqlBlobT
 getExprTy (LitE _) =
-  return $ MonoTy SqlTextT
+  return $ MonoTy SqlAnyT
 getExprTy (RefE (Just tname) cname) =
   return $ ColumnRefTy tname cname
 getExprTy (RefE Nothing _cname) =
@@ -149,32 +150,32 @@ getExprTy (ParamE pname) =
   return $ ParamRefTy pname
 getExprTy (UnopE Not e) = do
   exprTy <- getExprTy e
-  addConstraint $ CompatibleTypes (MonoTy SqlBoolT) exprTy
-  return $ MonoTy SqlBoolT
+  addConstraint $ MonoTy SqlBooleanT `SubtypeOf` exprTy
+  return $ MonoTy SqlBooleanT
 getExprTy (BinopE op a b)
   | op `elem` ([Equals, NotEquals, Less, Greater] :: [Binop])
   = do
       aTy <- getExprTy a
       bTy <- getExprTy b
       addConstraint $ ComparableTypes aTy bTy
-      return $ MonoTy SqlBoolT
+      return $ MonoTy SqlBooleanT
   | otherwise
   = throwError TypeErrorNotImplemented
 getExprTy (FoldE _ exprs) = do
   exprTys <- Vector.toList <$> Vector.mapM getExprTy exprs
   forM_ exprTys $ \exprTy -> do
-    addConstraint $ CompatibleTypes (MonoTy SqlBoolT) exprTy
-  return $ MonoTy SqlBoolT
+    addConstraint $ MonoTy SqlBooleanT `SubtypeOf` exprTy
+  return $ MonoTy SqlBooleanT
 getExprTy (SubqueryE q) = do
   qTy <- withLocalScope $ tcSelectQuery q
   case selectQueryResultTy qTy of
     [(_, ty)] -> return ty
     _ -> throwError TypeErrorSubqueryColumnCount
 
-withLocalScope :: MonadState s m => m a -> m a
+withLocalScope :: TC a -> TC a
 withLocalScope action = do
   s <- get
-  action <* put s
+  action <* modify (\s' -> s { tceConstraints = tceConstraints s' })
 
 addTableAlias :: TableName -> Tabloid -> TC ()
 addTableAlias a tb =
