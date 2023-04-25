@@ -18,7 +18,6 @@ import qualified Data.Text as Text
 import qualified Data.Vector as Vector
 
 import Database.Posterchild.Syntax.Abstract
-import Database.Posterchild.Syntax.Common
 import Database.Posterchild.Syntax.SqlTy
 
 data QueryConstraint

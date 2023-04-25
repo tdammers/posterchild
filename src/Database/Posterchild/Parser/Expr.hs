@@ -7,11 +7,9 @@ where
 import Text.Megaparsec
 import Text.Megaparsec.Char
 import qualified Data.Vector as Vector
-import Data.Text (Text)
 import qualified Data.Text as Text
 import Data.String (fromString)
 
-import Database.Posterchild.Syntax.Common
 import Database.Posterchild.Syntax.Abstract
 import Database.Posterchild.Parser.Common
 
@@ -39,6 +37,7 @@ orExprP = do
     [] -> return lhs
     _ -> return $ FoldE Any $ Vector.fromList (lhs : tails)
 
+{- HLINT ignore "Use <$>" -}
 compExprP :: Parser s Expr
 compExprP = label "comparative expression" $ do
   lhs <- appExprP

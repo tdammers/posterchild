@@ -14,7 +14,6 @@ import Control.Monad (void)
 import Database.Posterchild.Parser.Common
 import Database.Posterchild.Parser.Expr
 import Database.Posterchild.Syntax.Abstract
-import Database.Posterchild.Syntax.Common
 
 parseSelect :: MonadFail m => String -> String -> m SelectQuery
 parseSelect filename input =
