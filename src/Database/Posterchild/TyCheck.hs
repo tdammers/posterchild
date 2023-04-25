@@ -14,7 +14,6 @@ import Data.Map (Map)
 import qualified Data.Map as Map
 import Data.Maybe (fromMaybe)
 import Data.Text (Text)
-import qualified Data.Text as Text
 import qualified Data.Vector as Vector
 
 import Database.Posterchild.Syntax.Abstract
@@ -24,6 +23,7 @@ data QueryConstraint
   = TableExists !TableName
   | ColumnExists !ColumnRef
   | SubtypeOf !Ty !Ty
+  | EqTypes !Ty !Ty
   | ComparableTypes !Ty !Ty
   deriving (Show, Read, Eq)
 
@@ -152,7 +152,13 @@ getExprTy (UnopE Not e) = do
   addConstraint $ MonoTy SqlBooleanT `SubtypeOf` exprTy
   return $ MonoTy SqlBooleanT
 getExprTy (BinopE op a b)
-  | op `elem` ([Equals, NotEquals, Less, Greater] :: [Binop])
+  | op `elem` ([Equals, NotEquals] :: [Binop])
+  = do
+      aTy <- getExprTy a
+      bTy <- getExprTy b
+      addConstraint $ EqTypes aTy bTy
+      return $ MonoTy SqlBooleanT
+  | op `elem` ([Less, Greater] :: [Binop])
   = do
       aTy <- getExprTy a
       bTy <- getExprTy b

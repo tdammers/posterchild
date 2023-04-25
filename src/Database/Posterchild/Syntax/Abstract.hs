@@ -1,14 +1,16 @@
-{-# LANGUAGE GeneralizedNewtypeDeriving #-}
+{-# LANGUAGE DataKinds #-}
 {-# LANGUAGE DerivingStrategies #-}
+{-# LANGUAGE GADTs #-}
+{-# LANGUAGE GeneralizedNewtypeDeriving #-}
+{-# LANGUAGE KindSignatures #-}
+{-# LANGUAGE RankNTypes #-}
 
 module Database.Posterchild.Syntax.Abstract
 where
 
-import Data.Vector (Vector)
-import Data.Text (Text)
-import Data.ByteString (ByteString)
 import Data.String (IsString)
-
+import Data.Text (Text)
+import Data.Vector (Vector)
 
 newtype TableName =
   TableName { tableNameText :: Text }
@@ -25,13 +27,6 @@ newtype ParamName =
 data ColumnRef =
   ColumnRef !TableName !ColumnName
   deriving (Show, Read, Eq, Ord)
-
-data SqlValue
-  = SqlBool !Bool
-  | SqlText !Text
-  | SqlInt !Integer
-  | SqlBytes !ByteString
-  deriving (Show, Read, Eq)
 
 data Binop
   = Equals
