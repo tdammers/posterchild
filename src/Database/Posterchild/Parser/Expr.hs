@@ -10,7 +10,8 @@ import qualified Data.Vector as Vector
 import qualified Data.Text as Text
 import Data.String (fromString)
 
-import Database.Posterchild.Syntax.Abstract
+import Database.Posterchild.Syntax
+
 import Database.Posterchild.Parser.Common
 
 sqlExprP :: Parser s Expr

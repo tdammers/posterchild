@@ -4,13 +4,11 @@
 module Database.Posterchild.TH
 where
 
-import Database.Posterchild.Syntax.Abstract
-import Database.Posterchild.Syntax.SqlTy
+import Database.Posterchild.Syntax
 import Database.Posterchild.TyCheck
 import Database.Posterchild.Parser.Select
 import Database.Posterchild.SchemaConstraints
 import Language.Haskell.TH
-import Data.Text (Text)
 import qualified Data.Text as Text
 import Data.List (foldl')
 

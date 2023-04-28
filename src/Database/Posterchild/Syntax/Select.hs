@@ -1,43 +1,17 @@
 {-# LANGUAGE DataKinds #-}
 {-# LANGUAGE DerivingStrategies #-}
 {-# LANGUAGE GADTs #-}
-{-# LANGUAGE GeneralizedNewtypeDeriving #-}
 {-# LANGUAGE KindSignatures #-}
 {-# LANGUAGE RankNTypes #-}
 
-module Database.Posterchild.Syntax.Abstract
+module Database.Posterchild.Syntax.Select
 where
 
-import Data.String (IsString)
 import Data.Text (Text)
 import Data.Vector (Vector)
 
-newtype TableName =
-  TableName { tableNameText :: Text }
-  deriving newtype (Show, Read, Eq, Ord, IsString)
+import Database.Posterchild.Syntax.Common
 
-newtype ColumnName =
-  ColumnName { columnNameText :: Text }
-  deriving newtype (Show, Read, Eq, Ord, IsString)
-
-newtype ParamName =
-  ParamName { paramNameText :: Text }
-  deriving newtype (Show, Read, Eq, Ord, IsString)
-
-data ColumnRef =
-  ColumnRef !TableName !ColumnName
-  deriving (Show, Read, Eq, Ord)
-
-data Binop
-  = Equals
-  | NotEquals
-  | Less
-  | Greater
-  deriving (Show, Read, Eq)
-
-data Unop
-  = Not
-  deriving (Show, Read, Eq)
 data SelectQuery =
   SelectQuery
     { selectFrom :: !SelectFrom
@@ -72,6 +46,22 @@ data JoinType
   | CrossJoin
   deriving (Show, Read, Eq)
 
+data Binop
+  = Equals
+  | NotEquals
+  | Less
+  | Greater
+  deriving (Show, Read, Eq)
+
+data Unop
+  = Not
+  deriving (Show, Read, Eq)
+
+data BoolOp
+  = Any
+  | All
+  deriving (Show, Read, Eq, Ord, Enum, Bounded)
+
 data Expr
   = NullE
   | BoolLitE !Bool
@@ -85,7 +75,3 @@ data Expr
   | SubqueryE !SelectQuery
   deriving (Show, Read, Eq)
 
-data BoolOp
-  = Any
-  | All
-  deriving (Show, Read, Eq, Ord, Enum, Bounded)

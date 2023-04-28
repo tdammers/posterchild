@@ -13,8 +13,6 @@ import Text.Printf
 import Language.Haskell.TH (runQ, pprint)
 
 import Database.Posterchild
-import Database.Posterchild.Syntax.Abstract
-import Database.Posterchild.Syntax.SqlTy
 import Database.Posterchild.SchemaConstraints
 import Database.Posterchild.Parser
 import Database.Posterchild.TH

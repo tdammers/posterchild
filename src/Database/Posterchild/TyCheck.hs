@@ -16,8 +16,7 @@ import Data.Maybe (fromMaybe)
 import Data.Text (Text)
 import qualified Data.Vector as Vector
 
-import Database.Posterchild.Syntax.Abstract
-import Database.Posterchild.Syntax.SqlTy
+import Database.Posterchild.Syntax
 
 data QueryConstraint
   = TableExists !TableName

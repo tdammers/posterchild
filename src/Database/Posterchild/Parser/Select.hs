@@ -11,9 +11,9 @@ import Text.Megaparsec
 import Text.Megaparsec.Char
 import Control.Monad (void)
 
+import Database.Posterchild.Syntax
 import Database.Posterchild.Parser.Common
 import Database.Posterchild.Parser.Expr
-import Database.Posterchild.Syntax.Abstract
 
 parseSelect :: MonadFail m => String -> String -> m SelectQuery
 parseSelect filename input =

@@ -20,7 +20,9 @@ library
     import:           warnings
     exposed-modules: Database.Posterchild
                    , Database.Posterchild.TyCheck
-                   , Database.Posterchild.Syntax.Abstract
+                   , Database.Posterchild.Syntax
+                   , Database.Posterchild.Syntax.Common
+                   , Database.Posterchild.Syntax.Select
                    , Database.Posterchild.Syntax.SqlTy
                    , Database.Posterchild.Parser
                    , Database.Posterchild.Parser.Common

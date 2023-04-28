@@ -1,8 +1,7 @@
 module Database.Posterchild
-( module Database.Posterchild.Syntax.Abstract
-, module Database.Posterchild.TyCheck
+( module M
 )
 where
 
-import Database.Posterchild.Syntax.Abstract
-import Database.Posterchild.TyCheck
+import Database.Posterchild.Syntax as M
+import Database.Posterchild.TyCheck as M

@@ -5,8 +5,6 @@
 module Database.Posterchild.SchemaConstraints
 where
 
-import Database.Posterchild.Syntax.SqlTy
-
 import Data.Kind
 import GHC.TypeLits
 
