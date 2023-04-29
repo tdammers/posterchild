@@ -62,7 +62,7 @@ queryStr =
   " where posts.user_id = 1 " ++
   " and users.role = $1"
 
-$(mkSelectQuery "selectPostsByUser" $
+$(mkSelectQueryDec "selectPostsByUser" $
     "select posts.id as post_id " ++
     " , (select users.username from users where users.id = posts.user_id) as username " ++
     " , posts.title " ++
@@ -90,4 +90,4 @@ main = do
   putStrLn "--- constraints ---"
   mapM_ print $ selectQueryConstraintsTy queryT
 
-  putStrLn . pprint =<< runQ (mkSelectQuery "selectPostsByUser" queryStr)
+  putStrLn . pprint =<< runQ (mkSelectQueryDec "selectPostsByUser" queryStr)

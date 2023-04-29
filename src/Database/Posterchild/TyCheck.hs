@@ -17,6 +17,7 @@ import qualified Data.Set as Set
 import Data.Maybe (fromMaybe)
 import Data.Text (Text)
 import qualified Data.Vector as Vector
+import Debug.Trace
 
 import Database.Posterchild.Syntax
 

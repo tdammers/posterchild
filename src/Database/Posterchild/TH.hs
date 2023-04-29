@@ -28,7 +28,7 @@ columnNameLit (ColumnName cname) = litT (strTyLit (Text.unpack cname))
 
 paramName :: ParamName -> Name
 paramName (ParamName pname) =
-  mkName ("param_" ++ Text.unpack pname)
+  mkName ("p" ++ Text.unpack pname)
 
 paramNameLit :: ParamName -> Q Type
 paramNameLit pname =
@@ -107,10 +107,7 @@ mkQueryConstraint sname (TableExists tname) =
     ]
 mkQueryConstraint sname (ColumnExists (ColumnRef tname cname)) =
   sequence
-    [ conT ''SchemaHasTable
-        `appT` varT sname
-        `appT` tableNameLit tname
-    , conT ''TableHasColumn
+    [ conT ''TableHasColumn
         `appT`
           ( conT ''SchemaTableTy
             `appT` varT sname
@@ -140,16 +137,19 @@ mkQueryConstraint sname (ComparableTypes a b) =
 {- HLINT "ignore Move brackets" -}
 mkQueryTyDec :: Name -> Name -> SelectQueryTy -> DecQ
 mkQueryTyDec n sname sqt = do
+  sigD n $ mkQueryTy sname sqt
+
+mkQueryTy :: Name -> SelectQueryTy -> TypeQ
+mkQueryTy sname sqt = do
   let paramNames = map (paramName . fst) $ selectQueryParamsTy sqt
-  sigD n $
-    forallT [PlainTV fn SpecifiedSpec | fn <- sname : paramNames ]
-      (concat <$> mapM (mkQueryConstraint sname) (selectQueryConstraintsTy sqt))
-      [t|
-        Proxy $(varT sname)
-        -> Connection
-        -> $(mkQueryParamsT $ selectQueryParamsTy sqt)
-        -> $(mkQueryResultsT sname $ selectQueryResultTy sqt)
-        |]
+  forallT [PlainTV fn SpecifiedSpec | fn <- sname : paramNames ]
+    (concat <$> mapM (mkQueryConstraint sname) (selectQueryConstraintsTy sqt))
+    [t|
+      Proxy $(varT sname)
+      -> Connection
+      -> $(mkQueryParamsT $ selectQueryParamsTy sqt)
+      -> $(mkQueryResultsT sname $ selectQueryResultTy sqt)
+      |]
 
 mkQueryParamsT :: [(ParamName, Ty)] -> Q Type
 mkQueryParamsT [] = conT '()
@@ -172,15 +172,19 @@ mkQueryResultRowT sname xs = do
   ts <- mapM (tyToType sname . snd) xs
   return $ foldl' AppT (TupleT $ length ts) ts
 
-mkSelectQuery :: String -> String -> Q [Dec]
-mkSelectQuery fnameStr queryString = do
+mkSelectQueryBodyExp :: String -> ExpQ
+mkSelectQueryBodyExp _queryString =
+  varE 'undefined
+
+mkSelectQueryDec :: String -> String -> Q [Dec]
+mkSelectQueryDec fnameStr queryString = do
   sq <- parseSelect "<<TH>>" queryString
   sqt <- either (error . show) return $ runTC $ tcSelectQuery sq
   let fname = mkName fnameStr
   sname <- newName "schema"
   sequence
     [ mkQueryTyDec fname sname sqt
-    , valD (varP fname) (normalB $ varE 'undefined) []
+    , valD (varP fname) (normalB $ mkSelectQueryBodyExp queryString) []
     ]
 
 schemaTyName :: Schema -> Name
