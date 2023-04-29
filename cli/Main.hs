@@ -1,21 +1,56 @@
 {-# LANGUAGE OverloadedStrings #-}
+{-# LANGUAGE OverloadedLists #-}
 {-# LANGUAGE TemplateHaskell #-}
 {-# LANGUAGE DataKinds #-}
 {-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE TypeFamilies #-}
 {-# LANGUAGE AllowAmbiguousTypes #-}
+{-# LANGUAGE MultiParamTypeClasses #-}
 
 module Main where
 
 import Control.Monad (forM_)
 import Text.Printf
 import Language.Haskell.TH (runQ, pprint)
+import Database.HDBC.PostgreSQL (Connection)
+import Data.Proxy
 
 import Database.Posterchild
 import Database.Posterchild.SchemaConstraints
 import Database.Posterchild.Parser
 import Database.Posterchild.TH
+
+$(mkSchema $
+    Schema
+      "blogg"
+      [ ("users",
+          Table
+            { tableColumns =
+                [ Column "id" SqlIntegerT NotNull
+                , Column "username" SqlTextT NotNull
+                , Column "role" SqlIntegerT NotNull
+                ]
+            , tableConstraints =
+                [
+                ]
+            }
+        )
+      , ("posts",
+          Table
+            { tableColumns =
+                [ Column "id" SqlIntegerT NotNull
+                , Column "user_id" SqlIntegerT NotNull
+                , Column "title" SqlTextT NotNull
+                , Column "body" SqlTextT NotNull
+                ]
+            , tableConstraints =
+                [
+                ]
+            }
+        )
+      ]
+  )
 
 queryStr :: String
 queryStr = 

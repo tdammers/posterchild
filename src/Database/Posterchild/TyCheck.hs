@@ -12,6 +12,8 @@ import Control.Monad.State
 import Data.Int
 import Data.Map (Map)
 import qualified Data.Map as Map
+import Data.Set (Set)
+import qualified Data.Set as Set
 import Data.Maybe (fromMaybe)
 import Data.Text (Text)
 import qualified Data.Vector as Vector
@@ -24,7 +26,7 @@ data QueryConstraint
   | SubtypeOf !Ty !Ty
   | EqTypes !Ty !Ty
   | ComparableTypes !Ty !Ty
-  deriving (Show, Read, Eq)
+  deriving (Show, Read, Eq, Ord)
 
 data Ty
   = NullTy
@@ -42,7 +44,7 @@ data TCEnv =
   TCEnv
     { tceTableAliases :: Map TableName Tabloid
     , tceColumnAliases :: Map ColumnName Expr
-    , tceConstraints :: [QueryConstraint]
+    , tceConstraints :: Set QueryConstraint
     }
 
 emptyTCEnv :: TCEnv
@@ -90,11 +92,11 @@ tcSelectQuery q = do
   return SelectQueryTy
     { selectQueryParamsTy = params
     , selectQueryResultTy = resultTy
-    , selectQueryConstraintsTy = constraints
+    , selectQueryConstraintsTy = Set.toList constraints
     }
 
-cullConstraints :: [QueryConstraint] -> [QueryConstraint]
-cullConstraints = filter (not . isRedundantConstraint)
+cullConstraints :: Set QueryConstraint -> Set QueryConstraint
+cullConstraints = Set.filter (not . isRedundantConstraint)
 
 isRedundantConstraint :: QueryConstraint -> Bool
 isRedundantConstraint (MonoTy a `SubtypeOf` MonoTy b)
@@ -140,7 +142,9 @@ getExprTy (IntLitE _)
   = return $ MonoTy SqlBlobT
 getExprTy (LitE _) =
   return $ MonoTy SqlAnyT
-getExprTy (RefE (Just tname) cname) =
+getExprTy (RefE (Just tname) cname) = do
+  addConstraint $ TableExists tname
+  addConstraint $ ColumnExists (ColumnRef tname cname)
   return $ ColumnRefTy tname cname
 getExprTy (RefE Nothing _cname) =
   throwError TypeErrorNotImplemented
@@ -191,7 +195,7 @@ addColumnAlias a expr =
 
 addConstraint :: QueryConstraint -> TC ()
 addConstraint c =
-  modify $ \s -> s { tceConstraints = c : tceConstraints s }
+  modify $ \s -> s { tceConstraints = Set.insert c (tceConstraints s) }
 
 getTableAliases :: SelectFrom -> TC ()
 getTableAliases from =

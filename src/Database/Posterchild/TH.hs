@@ -1,16 +1,24 @@
 {-# LANGUAGE TemplateHaskell #-}
+{-# LANGUAGE QuasiQuotes #-}
 {-# LANGUAGE DataKinds #-}
+{-# LANGUAGE TypeApplications #-}
 
 module Database.Posterchild.TH
 where
 
-import Database.Posterchild.Syntax
-import Database.Posterchild.TyCheck
 import Database.Posterchild.Parser.Select
 import Database.Posterchild.SchemaConstraints
-import Language.Haskell.TH
-import qualified Data.Text as Text
+import Database.Posterchild.Syntax
+import Database.Posterchild.TyCheck
+
 import Data.List (foldl')
+import qualified Data.Map as Map
+import qualified Data.Text as Text
+import Language.Haskell.TH
+import Text.Casing (pascal)
+import Numeric.Natural
+import Database.HDBC.PostgreSQL (Connection)
+import Data.Proxy
 
 tableNameLit :: TableName -> Q Type
 tableNameLit (TableName tname) = litT (strTyLit (Text.unpack tname))
@@ -99,8 +107,16 @@ mkQueryConstraint sname (TableExists tname) =
     ]
 mkQueryConstraint sname (ColumnExists (ColumnRef tname cname)) =
   sequence
-    [ conT ''SchemaHasTable `appT` varT sname `appT` tableNameLit tname
-    , conT ''TableHasColumn `appT` tableNameLit tname `appT` columnNameLit cname
+    [ conT ''SchemaHasTable
+        `appT` varT sname
+        `appT` tableNameLit tname
+    , conT ''TableHasColumn
+        `appT`
+          ( conT ''SchemaTableTy
+            `appT` varT sname
+            `appT` tableNameLit tname
+          )
+        `appT` columnNameLit cname
     ]
 mkQueryConstraint sname (SubtypeOf a b) =
   sequence
@@ -128,10 +144,12 @@ mkQueryTyDec n sname sqt = do
   sigD n $
     forallT [PlainTV fn SpecifiedSpec | fn <- sname : paramNames ]
       (concat <$> mapM (mkQueryConstraint sname) (selectQueryConstraintsTy sqt))
-      (arrowT
-        `appT` (mkQueryParamsT $ selectQueryParamsTy sqt)
-        `appT` (mkQueryResultsT sname $ selectQueryResultTy sqt)
-      )
+      [t|
+        Proxy $(varT sname)
+        -> Connection
+        -> $(mkQueryParamsT $ selectQueryParamsTy sqt)
+        -> $(mkQueryResultsT sname $ selectQueryResultTy sqt)
+        |]
 
 mkQueryParamsT :: [(ParamName, Ty)] -> Q Type
 mkQueryParamsT [] = conT '()
@@ -144,9 +162,13 @@ mkQueryParamT :: (ParamName, Ty) -> Q Type
 mkQueryParamT (n, _) = paramNameLit n
 
 mkQueryResultsT :: Name -> [(ColumnName, Ty)] -> Q Type
-mkQueryResultsT _ [] = conT '()
-mkQueryResultsT sname [(_, t)] = tyToType sname t
-mkQueryResultsT sname xs = do
+mkQueryResultsT sname columns =
+  [t| IO [ $(mkQueryResultRowT sname columns) ] |]
+
+mkQueryResultRowT :: Name -> [(ColumnName, Ty)] -> Q Type
+mkQueryResultRowT _ [] = conT '()
+mkQueryResultRowT sname [(_, t)] = tyToType sname t
+mkQueryResultRowT sname xs = do
   ts <- mapM (tyToType sname . snd) xs
   return $ foldl' AppT (TupleT $ length ts) ts
 
@@ -160,3 +182,110 @@ mkSelectQuery fnameStr queryString = do
     [ mkQueryTyDec fname sname sqt
     , valD (varP fname) (normalB $ varE 'undefined) []
     ]
+
+schemaTyName :: Schema -> Name
+schemaTyName schema =
+  mkName $ pascal (Text.unpack . schemaNameText . schemaName $ schema)
+
+mkSchema :: Schema -> Q [Dec]
+mkSchema schema = do
+  let schemaN = schemaTyName schema
+  schemaPhantomDec <- dataD (pure []) schemaN [] Nothing [normalC schemaN []] []
+  tablePhantomDecs <- mkSchemaTablePhantoms schema
+  return $ schemaPhantomDec : tablePhantomDecs
+
+mkSchemaTablePhantoms :: Schema -> Q [Dec]
+mkSchemaTablePhantoms schema =
+  concat <$> mapM (\(tableName, table) -> mkTable schema tableName table) (Map.toList $ schemaTables schema)
+
+mkTable :: Schema -> TableName -> Table -> Q [Dec]
+mkTable schema tableName table = do
+  let schemaN = schemaTyName schema
+  let tableN = mkName $ pascal (Text.unpack . tableNameText $ tableName)
+  let tableTySym = litT . strTyLit . Text.unpack . tableNameText $ tableName
+  tablePhantomDec <- dataD (pure []) tableN [] Nothing [normalC tableN []] []
+  schemaHasTableDec <- [d|
+    instance SchemaHasTable $(conT schemaN) $(tableTySym) where
+      type SchemaTableTy $(conT schemaN) $(tableTySym) = $(conT tableN)
+    |]
+  tableColumnDecs <- concat <$> mapM (mkTableColumnDec tableN) (tableColumns table)
+  return $ tablePhantomDec : (schemaHasTableDec ++ tableColumnDecs)
+
+mkTableColumnDec :: Name -> Column -> Q [Dec]
+mkTableColumnDec tableN column = do
+  let columnTySym = litT . strTyLit . Text.unpack . columnNameText $ columnName column
+  [d| instance TableHasColumn $(conT tableN) $(columnTySym) where
+        type TableColumnTy $(conT tableN) $(columnTySym) =
+          SqlValue $( mkSqlTy (columnType column) )
+    |]
+
+liftNat :: Natural -> Q Type
+liftNat n = litT . numTyLit . fromIntegral $ n
+
+liftMaybe :: (a -> Q Type) -> Maybe a -> Q Type
+liftMaybe _ Nothing = conT 'Nothing
+liftMaybe f (Just x) = conT 'Just `appT` f x
+
+liftMaybeNat :: Maybe Natural -> Q Type
+liftMaybeNat = liftMaybe liftNat
+
+mkSqlTy :: SqlTy -> Q Type
+mkSqlTy SqlAnyT = conT 'SqlAnyT
+mkSqlTy (SqlArrayT t ml) = conT 'SqlArrayT `appT` mkSqlTy t `appT` liftMaybeNat ml
+mkSqlTy SqlBigIntT = conT 'SqlBigIntT
+mkSqlTy SqlBigSerialT = conT 'SqlBigSerialT 
+mkSqlTy (SqlBitT n) = conT 'SqlBitT `appT` liftNat n
+mkSqlTy (SqlBitVaryingT ml) = conT 'SqlBitVaryingT `appT` liftMaybeNat ml
+mkSqlTy SqlBlobT = conT 'SqlBlobT 
+mkSqlTy SqlBooleanT = conT 'SqlBooleanT 
+mkSqlTy SqlBoxT = conT 'SqlBoxT 
+mkSqlTy (SqlCharT s) = conT 'SqlCharT `appT` liftNat s
+mkSqlTy SqlCIDRT = conT 'SqlCIDRT 
+mkSqlTy SqlCircleT = conT 'SqlCircleT 
+mkSqlTy SqlDateT = conT 'SqlDateT 
+mkSqlTy SqlDoubleT = conT 'SqlDoubleT 
+mkSqlTy SqlINETT = conT 'SqlINETT 
+mkSqlTy SqlIntegerT = conT 'SqlIntegerT 
+mkSqlTy (SqlIntervalT fields p) = conT 'SqlIntervalT `appT` liftIntervalFields fields `appT` liftNat p
+mkSqlTy SqlJSONBT = conT 'SqlJSONBT 
+mkSqlTy SqlJSONT = conT 'SqlJSONT 
+mkSqlTy SqlLineT = conT 'SqlLineT 
+mkSqlTy SqlLSegT = conT 'SqlLSegT 
+mkSqlTy SqlMacAddr8T = conT 'SqlMacAddr8T 
+mkSqlTy SqlMacAddrT = conT 'SqlMacAddrT 
+mkSqlTy SqlMoneyT = conT 'SqlMoneyT 
+mkSqlTy SqlNamedEnumT = conT 'SqlNamedEnumT 
+mkSqlTy (SqlNumericT p s) = conT 'SqlNumericT `appT` liftNat p `appT` liftNat s
+mkSqlTy SqlPathT = conT 'SqlPathT 
+mkSqlTy SqlPointT = conT 'SqlPointT 
+mkSqlTy SqlPolygonT = conT 'SqlPolygonT 
+mkSqlTy SqlRealT = conT 'SqlRealT 
+mkSqlTy SqlSerialT = conT 'SqlSerialT 
+mkSqlTy SqlSmallIntT = conT 'SqlSmallIntT 
+mkSqlTy SqlSmallSerialT = conT 'SqlSmallSerialT 
+mkSqlTy SqlTextSearchQueryT = conT 'SqlTextSearchQueryT 
+mkSqlTy SqlTextSearchVectorT = conT 'SqlTextSearchVectorT 
+mkSqlTy SqlTextT = conT 'SqlTextT 
+mkSqlTy (SqlTimestampT p) = conT 'SqlTimestampT `appT` liftNat p
+mkSqlTy (SqlTimestampWithTimeZoneT p) = conT 'SqlTimestampWithTimeZoneT `appT` liftNat p
+mkSqlTy (SqlTimeT p) = conT 'SqlTimeT `appT` liftNat p
+mkSqlTy (SqlTimeWithTimeZoneT p) = conT 'SqlTimeWithTimeZoneT `appT` liftNat p
+mkSqlTy SqlUUIDT = conT 'SqlUUIDT 
+mkSqlTy (SqlVarCharT s) = conT 'SqlVarCharT `appT` liftNat s
+mkSqlTy SqlXMLT = conT 'SqlXMLT 
+
+liftIntervalFields :: SqlIntervalFields -> Q Type
+liftIntervalFields AllIntervalFields = conT 'AllIntervalFields
+liftIntervalFields YearIntervalField = conT 'YearIntervalField
+liftIntervalFields MonthIntervalField = conT 'MonthIntervalField
+liftIntervalFields DayIntervalField = conT 'DayIntervalField
+liftIntervalFields HourIntervalField = conT 'HourIntervalField
+liftIntervalFields MinuteIntervalField = conT 'MinuteIntervalField
+liftIntervalFields SecondIntervalField = conT 'SecondIntervalField
+liftIntervalFields YearToMonthIntervalFields = conT 'YearToMonthIntervalFields
+liftIntervalFields DayToHourIntervalFields = conT 'DayToHourIntervalFields
+liftIntervalFields DayToMinuteIntervalFields = conT 'DayToMinuteIntervalFields
+liftIntervalFields DayToSecondIntervalFields = conT 'DayToSecondIntervalFields
+liftIntervalFields HourToMinuteIntervalFields = conT 'HourToMinuteIntervalFields
+liftIntervalFields HourToSecondIntervalFields = conT 'HourToSecondIntervalFields
+liftIntervalFields MinuteToSecondIntervalFields = conT 'MinuteToSecondIntervalFields
