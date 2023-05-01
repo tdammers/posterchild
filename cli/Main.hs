@@ -20,58 +20,17 @@ import Database.Posterchild
 import Database.Posterchild.SchemaConstraints
 import Database.Posterchild.Parser
 import Database.Posterchild.TH
+import Database.Posterchild.Driver.Class
+import Data.HList
 
-$(mkSchema $
-    Schema
-      "blogg"
-      [ ("users",
-          Table
-            { tableColumns =
-                [ Column "id" SqlIntegerT NotNull
-                , Column "username" SqlTextT NotNull
-                , Column "role" SqlIntegerT NotNull
-                ]
-            , tableConstraints =
-                [
-                ]
-            }
-        )
-      , ("posts",
-          Table
-            { tableColumns =
-                [ Column "id" SqlIntegerT NotNull
-                , Column "user_id" SqlIntegerT NotNull
-                , Column "title" SqlTextT NotNull
-                , Column "body" SqlTextT NotNull
-                ]
-            , tableConstraints =
-                [
-                ]
-            }
-        )
-      ]
-  )
+import SQL
+
+$(mkSchema bloggSchema)
 
 queryStr :: String
-queryStr = 
-  "select posts.id as post_id " ++
-  " , (select users.username from users where users.id = posts.user_id) as username " ++
-  " , posts.title " ++
-  " , posts.body " ++
-  " from posts" ++
-  " where posts.user_id = 1 " ++
-  " and users.role = $1"
+queryStr = selectPostsByUserQS
 
-$(mkSelectQueryDec "selectPostsByUser" $
-    "select posts.id as post_id " ++
-    " , (select users.username from users where users.id = posts.user_id) as username " ++
-    " , posts.title " ++
-    " , posts.body " ++
-    " from posts" ++
-    " where posts.user_id = 1 " ++
-    " and users.role = $1 " ++
-    " and posts.id = $2 "
-  )
+$(mkSelectQueryDec "selectPostsByUser" selectPostsByUserQS)
 
 main :: IO ()
 main = do

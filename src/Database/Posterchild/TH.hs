@@ -10,14 +10,14 @@ import Database.Posterchild.Parser.Select
 import Database.Posterchild.SchemaConstraints
 import Database.Posterchild.Syntax
 import Database.Posterchild.TyCheck
+import Database.Posterchild.Driver.Class
+import Data.HList
 
-import Data.List (foldl')
 import qualified Data.Map as Map
 import qualified Data.Text as Text
 import Language.Haskell.TH
 import Text.Casing (pascal)
 import Numeric.Natural
-import Database.HDBC.PostgreSQL (Connection)
 import Data.Proxy
 
 tableNameLit :: TableName -> Q Type
@@ -142,21 +142,31 @@ mkQueryTyDec n sname sqt = do
 mkQueryTy :: Name -> SelectQueryTy -> TypeQ
 mkQueryTy sname sqt = do
   let paramNames = map (paramName . fst) $ selectQueryParamsTy sqt
-  forallT [PlainTV fn SpecifiedSpec | fn <- sname : paramNames ]
+  let dname = mkName "driver"
+  let paramsT = mkQueryParamsT $ selectQueryParamsTy sqt
+      resultRowT = mkQueryResultRowT sname $ selectQueryResultTy sqt
+      resultsT = mkQueryResultsT sname $ selectQueryResultTy sqt
+  forallT [PlainTV fn SpecifiedSpec | fn <- dname : sname : paramNames ]
     (concat <$> mapM (mkQueryConstraint sname) (selectQueryConstraintsTy sqt))
     [t|
-      Proxy $(varT sname)
-      -> Connection
-      -> $(mkQueryParamsT $ selectQueryParamsTy sqt)
-      -> $(mkQueryResultsT sname $ selectQueryResultTy sqt)
+      DatabaseDriver $(varT dname)
+      => FromTyped $(paramsT) (DriverParams $(varT dname))
+      => FromUntyped (DriverResultRow $(varT dname)) $(resultRowT)
+      => Proxy $(varT sname)
+      -> $(varT dname)
+      -> $(paramsT)
+      -> $(resultsT)
       |]
 
+mkHListT :: ((a, Ty) -> Q Type) -> [(a, Ty)] -> Q Type
+mkHListT _ [] = conT '[]
+mkHListT mkElemT (t : xs) =
+  conT '(:)
+    `appT` (mkElemT t)
+    `appT` mkHListT mkElemT xs
+
 mkQueryParamsT :: [(ParamName, Ty)] -> Q Type
-mkQueryParamsT [] = conT '()
-mkQueryParamsT [x] = mkQueryParamT x
-mkQueryParamsT xs = do
-  ts <- mapM mkQueryParamT xs
-  return $ foldl' AppT (TupleT $ length ts) ts
+mkQueryParamsT xs = conT ''HList `appT` mkHListT mkQueryParamT xs
 
 mkQueryParamT :: (ParamName, Ty) -> Q Type
 mkQueryParamT (n, _) = paramNameLit n
@@ -166,15 +176,13 @@ mkQueryResultsT sname columns =
   [t| IO [ $(mkQueryResultRowT sname columns) ] |]
 
 mkQueryResultRowT :: Name -> [(ColumnName, Ty)] -> Q Type
-mkQueryResultRowT _ [] = conT '()
-mkQueryResultRowT sname [(_, t)] = tyToType sname t
-mkQueryResultRowT sname xs = do
-  ts <- mapM (tyToType sname . snd) xs
-  return $ foldl' AppT (TupleT $ length ts) ts
+mkQueryResultRowT sname xs =
+  conT ''HList `appT` mkHListT (tyToType sname . snd) xs
 
 mkSelectQueryBodyExp :: String -> ExpQ
-mkSelectQueryBodyExp _queryString =
-  varE 'undefined
+mkSelectQueryBodyExp queryString =
+  [e| \_ driver -> typedQuery driver $(litE $ StringL queryString)
+    |]
 
 mkSelectQueryDec :: String -> String -> Q [Dec]
 mkSelectQueryDec fnameStr queryString = do

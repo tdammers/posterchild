@@ -13,9 +13,3 @@ class SchemaHasTable (schema :: Type) (tableName :: Symbol) where
 
 class TableHasColumn (table :: Type) (columnName :: Symbol) where
   type (TableColumnTy table columnName) :: Type
-
-
-  -- = TableExists !TableName
-  -- | ColumnExists !ColumnRef
-  -- | SubtypeOf !Ty !Ty
-  -- | ComparableTypes !Ty !Ty
