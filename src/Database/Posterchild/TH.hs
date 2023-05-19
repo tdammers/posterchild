@@ -12,6 +12,7 @@ import Database.Posterchild.Syntax
 import Database.Posterchild.TyCheck
 import Database.Posterchild.Driver.Class
 import Data.HList
+import GHC.Stack (HasCallStack)
 
 import qualified Data.Map as Map
 import qualified Data.Text as Text
@@ -184,7 +185,7 @@ mkSelectQueryBodyExp queryString =
   [e| \_ driver -> typedQuery driver $(litE $ StringL queryString)
     |]
 
-mkSelectQueryDec :: String -> String -> Q [Dec]
+mkSelectQueryDec :: HasCallStack => String -> String -> Q [Dec]
 mkSelectQueryDec fnameStr queryString = do
   sq <- parseSelect "<<TH>>" queryString
   sqt <- either (error . show) return $ runTC $ tcSelectQuery sq

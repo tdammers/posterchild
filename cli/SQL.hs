@@ -6,42 +6,77 @@ where
 
 import Database.Posterchild
 
-selectPostsByUserQS :: String
-selectPostsByUserQS = 
-  "select posts.id as post_id " ++
-  " , (select users.username from users where users.id = posts.user_id) as username " ++
-  " , posts.title " ++
-  " , posts.body " ++
-  " from posts" ++
-  " where posts.user_id = 1 " ++
-  " and users.role = $1"
+selectSightingsByUserQS :: String
+selectSightingsByUserQS =
+  " select sighting.timestamp, species.scientific_name " ++
+  "  from user as u " ++
+  "  inner join sighting as s " ++
+  "    on s.user_id = u.id " ++
+  "  inner join species as sp " ++
+  "    on s.species_id = sp.id " ++
+  "  left join species_name as spn " ++
+  "    on spn.species_id = sp.id " ++
+  "       and spn.language = $2" ++
+  "  where u.username = $1 "
 
-bloggSchema :: Schema
-bloggSchema =
+birdtrackerSchema :: Schema
+birdtrackerSchema =
     Schema
-      "blogg"
-      [ ("users",
-          Table
+      "birdtracker"
+      [ ( "user"
+        , Table
             { tableColumns =
                 [ Column "id" SqlIntegerT NotNull
                 , Column "username" SqlTextT NotNull
-                , Column "role" SqlIntegerT NotNull
+                , Column "password" SqlBlobT Null
                 ]
             , tableConstraints =
                 [
                 ]
             }
         )
-      , ("posts",
-          Table
+      , ( "species"
+        , Table
             { tableColumns =
                 [ Column "id" SqlIntegerT NotNull
-                , Column "user_id" SqlIntegerT NotNull
-                , Column "title" SqlTextT NotNull
-                , Column "body" SqlTextT NotNull
+                , Column "scientific_name" SqlTextT NotNull
                 ]
             , tableConstraints =
                 [
+                ]
+            }
+        )
+      , ( "species_name"
+        , Table
+            { tableColumns =
+                [ Column "id" SqlIntegerT NotNull
+                , Column "species_id" SqlIntegerT NotNull
+                , Column "language" SqlTextT NotNull
+                , Column "name" SqlTextT NotNull
+                ]
+            , tableConstraints =
+                [ ForeignKeyConstraint $
+                    ForeignKey
+                      "species" [("species_id", "id")]
+                      Cascade
+                      Cascade
+                ]
+            }
+        )
+      , ( "sighting"
+        , Table
+            { tableColumns =
+                [ Column "id" SqlIntegerT NotNull
+                , Column "species_id" SqlIntegerT NotNull
+                , Column "user_id" SqlIntegerT NotNull
+                , Column "timestamp" (SqlTimestampWithTimeZoneT 6) NotNull
+                ]
+            , tableConstraints =
+                [ ForeignKeyConstraint $
+                    ForeignKey
+                      "species" [("species_id", "id")]
+                      SetNull
+                      Cascade
                 ]
             }
         )

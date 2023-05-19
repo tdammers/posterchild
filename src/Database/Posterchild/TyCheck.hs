@@ -17,7 +17,7 @@ import qualified Data.Set as Set
 import Data.Maybe (fromMaybe)
 import Data.Text (Text)
 import qualified Data.Vector as Vector
-import Debug.Trace
+import GHC.Stack (HasCallStack)
 
 import Database.Posterchild.Syntax
 
@@ -59,7 +59,7 @@ emptyTCEnv =
 data TypeError
   = TypeErrorOther Text
   | TypeErrorSubqueryColumnCount
-  | TypeErrorNotImplemented
+  | TypeErrorNotImplemented String
     -- ^ A subquery has the wrong number of columns. This happens when a
     -- subquery is used in a column context, but returns no columns, or more
     -- than one.
@@ -67,7 +67,7 @@ data TypeError
 
 type TC = ExceptT TypeError (State TCEnv)
 
-runTC :: TC a -> Either TypeError a
+runTC :: HasCallStack => TC a -> Either TypeError a
 runTC action =
   evalState (runExceptT action) emptyTCEnv
 
@@ -79,7 +79,7 @@ data SelectQueryTy =
     }
   deriving (Show, Read, Eq)
 
-tcSelectQuery :: SelectQuery -> TC SelectQueryTy
+tcSelectQuery :: HasCallStack => SelectQuery -> TC SelectQueryTy
 tcSelectQuery q = do
   getTableAliases (selectFrom q)
   getColumnAliases q
@@ -104,17 +104,17 @@ isRedundantConstraint (MonoTy a `SubtypeOf` MonoTy b)
   = a `isSubtypeOf` b
 isRedundantConstraint _ = False
 
-getResultTy :: SelectQuery -> TC [(ColumnName, Ty)]
+getResultTy :: HasCallStack => SelectQuery -> TC [(ColumnName, Ty)]
 getResultTy q = do
   Vector.toList <$> Vector.mapM getResultColumn (selectFields q)
 
-getResultColumn :: SelectField -> TC (ColumnName, Ty)
+getResultColumn :: HasCallStack => SelectField -> TC (ColumnName, Ty)
 getResultColumn (SelectField expr aliasMay) = do
   let name = fromMaybe "?" $ exprToColumnName expr <|> aliasMay
   ty <- getExprTy expr
   return (name, ty)
 
-exprToColumnName :: Expr -> Maybe ColumnName
+exprToColumnName :: HasCallStack => Expr -> Maybe ColumnName
 exprToColumnName (RefE Nothing cname) = Just cname
 exprToColumnName (RefE (Just (TableName tname)) (ColumnName cname)) =
   Just (ColumnName $ tname <> "." <> cname)
@@ -122,7 +122,7 @@ exprToColumnName (ParamE (ParamName pname)) =
   Just $ ColumnName pname
 exprToColumnName _ = Nothing
 
-getExprTy :: Expr -> TC Ty
+getExprTy :: HasCallStack => Expr -> TC Ty
 getExprTy NullE =
   return NullTy
 getExprTy (BoolLitE _) =
@@ -144,11 +144,16 @@ getExprTy (IntLitE _)
 getExprTy (LitE _) =
   return $ MonoTy SqlAnyT
 getExprTy (RefE (Just tname) cname) = do
-  addConstraint $ TableExists tname
-  addConstraint $ ColumnExists (ColumnRef tname cname)
-  return $ ColumnRefTy tname cname
+  tabloid <- resolveTableName tname
+  case tabloid of
+    TableTabloid tname' -> do
+      addConstraint $ TableExists tname'
+      addConstraint $ ColumnExists (ColumnRef tname' cname)
+      return $ ColumnRefTy tname' cname
+    _ -> do
+      return $ ColumnRefTy tname cname
 getExprTy (RefE Nothing _cname) =
-  throwError TypeErrorNotImplemented
+  throwError (TypeErrorNotImplemented "RefE Nothing _")
 getExprTy (ParamE pname) =
   return $ ParamRefTy pname
 getExprTy (UnopE Not e) = do
@@ -169,7 +174,7 @@ getExprTy (BinopE op a b)
       addConstraint $ ComparableTypes aTy bTy
       return $ MonoTy SqlBooleanT
   | otherwise
-  = throwError TypeErrorNotImplemented
+  = throwError (TypeErrorNotImplemented $ "Operator " ++ show op)
 getExprTy (FoldE _ exprs) = do
   exprTys <- Vector.toList <$> Vector.mapM getExprTy exprs
   forM_ exprTys $ \exprTy -> do
@@ -181,31 +186,39 @@ getExprTy (SubqueryE q) = do
     [(_, ty)] -> return ty
     _ -> throwError TypeErrorSubqueryColumnCount
 
-withLocalScope :: TC a -> TC a
+withLocalScope :: HasCallStack => TC a -> TC a
 withLocalScope action = do
   s <- get
   action <* modify (\s' -> s { tceConstraints = tceConstraints s' })
 
-addTableAlias :: TableName -> Tabloid -> TC ()
+resolveTableName :: HasCallStack => TableName -> TC Tabloid
+resolveTableName tn = do
+  aliases <- gets tceTableAliases
+  case Map.lookup tn aliases of
+    Nothing -> return (TableTabloid tn)
+    Just (TableTabloid n) -> resolveTableName n
+    Just t -> return t
+
+addTableAlias :: HasCallStack => TableName -> Tabloid -> TC ()
 addTableAlias a tb =
   modify $ \s -> s { tceTableAliases = Map.insert a tb $ tceTableAliases s }
 
-addColumnAlias :: ColumnName -> Expr -> TC ()
+addColumnAlias :: HasCallStack => ColumnName -> Expr -> TC ()
 addColumnAlias a expr =
   modify $ \s -> s { tceColumnAliases = Map.insert a expr $ tceColumnAliases s }
 
-addConstraint :: QueryConstraint -> TC ()
+addConstraint :: HasCallStack => QueryConstraint -> TC ()
 addConstraint c =
   modify $ \s -> s { tceConstraints = Set.insert c (tceConstraints s) }
 
-getTableAliases :: SelectFrom -> TC ()
+getTableAliases :: HasCallStack => SelectFrom -> TC ()
 getTableAliases from =
   case from of
     SelectFromSingle t (Just alias) -> addTableAlias alias t
     SelectFromSingle _ _ -> return ()
     SelectJoin _ a b _ -> getTableAliases a >> getTableAliases b
 
-getColumnAliases :: SelectQuery -> TC ()
+getColumnAliases :: HasCallStack => SelectQuery -> TC ()
 getColumnAliases q =
   Vector.mapM_ getFieldAliases $ selectFields q
   where
@@ -213,14 +226,14 @@ getColumnAliases q =
     getFieldAliases (SelectField expr (Just alias)) = addColumnAlias alias expr
     getFieldAliases _ = return ()
 
-getParamNames :: SelectQuery -> TC [ParamName]
+getParamNames :: HasCallStack => SelectQuery -> TC [ParamName]
 getParamNames q = do
   pnamesFrom <- getParamNamesInFrom (selectFrom q)
   pnamesFields <- mconcat . Vector.toList <$> Vector.mapM getParamNamesInField (selectFields q)
   pnamesWhere <- getParamNamesInExpr (selectWhere q)
   return $ pnamesFrom <> pnamesFields <> pnamesWhere
 
-getParamNamesInFrom :: SelectFrom -> TC [ParamName]
+getParamNamesInFrom :: HasCallStack => SelectFrom -> TC [ParamName]
 getParamNamesInFrom (SelectFromSingle t _) =
   getParamNamesInTabloid t
 getParamNamesInFrom (SelectJoin _ lhs rhs cond) = do
@@ -230,17 +243,17 @@ getParamNamesInFrom (SelectJoin _ lhs rhs cond) = do
     , getParamNamesInExpr cond
     ]
 
-getParamNamesInTabloid :: Tabloid -> TC [ParamName]
+getParamNamesInTabloid :: HasCallStack => Tabloid -> TC [ParamName]
 getParamNamesInTabloid (SubqueryTabloid q) =
   getParamNames q
 getParamNamesInTabloid _ =
   return []
 
-getParamNamesInField :: SelectField -> TC [ParamName]
+getParamNamesInField :: HasCallStack => SelectField -> TC [ParamName]
 getParamNamesInField (SelectField expr _) =
   getParamNamesInExpr expr
 
-getParamNamesInExpr :: Expr -> TC [ParamName]
+getParamNamesInExpr :: HasCallStack => Expr -> TC [ParamName]
 getParamNamesInExpr (ParamE p) = return [p]
 getParamNamesInExpr (UnopE _ e) = getParamNamesInExpr e
 getParamNamesInExpr (BinopE _ a b) =

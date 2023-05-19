@@ -25,12 +25,12 @@ import Data.HList
 
 import SQL
 
-$(mkSchema bloggSchema)
+$(mkSchema birdtrackerSchema)
 
 queryStr :: String
-queryStr = selectPostsByUserQS
+queryStr = selectSightingsByUserQS
 
-$(mkSelectQueryDec "selectPostsByUser" selectPostsByUserQS)
+$(mkSelectQueryDec "selectSightingsByUser" selectSightingsByUserQS)
 
 main :: IO ()
 main = do
@@ -49,4 +49,4 @@ main = do
   putStrLn "--- constraints ---"
   mapM_ print $ selectQueryConstraintsTy queryT
 
-  putStrLn . pprint =<< runQ (mkSelectQueryDec "selectPostsByUser" queryStr)
+  putStrLn . pprint =<< runQ (mkSelectQueryDec "selectSightingsByUser" queryStr)
