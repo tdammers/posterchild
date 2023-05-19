@@ -6,7 +6,7 @@ module Database.Posterchild.TyCheck
 where
 
 import Control.Applicative ( (<|>) )
-import Control.Monad (forM_)
+import Control.Monad (forM_, void)
 import Control.Monad.Except
 import Control.Monad.State
 import Data.Int
@@ -45,6 +45,8 @@ data TCEnv =
   TCEnv
     { tceTableAliases :: Map TableName Tabloid
     , tceColumnAliases :: Map ColumnName Expr
+    , tceKnownColumns :: Map ColumnName (TableName, ColumnName)
+    , tceKnownTables :: Set TableName
     , tceConstraints :: Set QueryConstraint
     }
 
@@ -53,6 +55,8 @@ emptyTCEnv =
   TCEnv
     { tceTableAliases = []
     , tceColumnAliases = []
+    , tceKnownColumns = []
+    , tceKnownTables = []
     , tceConstraints = []
     }
 
@@ -63,6 +67,8 @@ data TypeError
     -- ^ A subquery has the wrong number of columns. This happens when a
     -- subquery is used in a column context, but returns no columns, or more
     -- than one.
+  | TypeErrorAmbiguousColumn ColumnName
+    -- ^ An unqualified column reference could not be resolved unambiguously
   deriving (Show, Read, Eq)
 
 type TC = ExceptT TypeError (State TCEnv)
@@ -81,8 +87,10 @@ data SelectQueryTy =
 
 tcSelectQuery :: HasCallStack => SelectQuery -> TC SelectQueryTy
 tcSelectQuery q = do
+  getKnownTables (selectFrom q)
   getTableAliases (selectFrom q)
   getColumnAliases q
+  getFromConstraints (selectFrom q)
   paramNames <- getParamNames q
   let params = [ (pname, ParamRefTy pname) | pname <- paramNames ]
   resultTy <- getResultTy q
@@ -95,6 +103,22 @@ tcSelectQuery q = do
     , selectQueryResultTy = resultTy
     , selectQueryConstraintsTy = Set.toList constraints
     }
+
+getFromConstraints :: SelectFrom -> TC ()
+getFromConstraints (SelectFromSingle tabloid _) =
+  getTabloidConstraints tabloid
+getFromConstraints (SelectJoin _ a b cond) = do
+  getFromConstraints a
+  getFromConstraints b
+  void $ getExprTy cond
+
+getTabloidConstraints :: Tabloid -> TC ()
+getTabloidConstraints DualTabloid =
+  return ()
+getTabloidConstraints (TableTabloid tableName) =
+  addConstraint $ TableExists tableName
+getTabloidConstraints (SubqueryTabloid _) =
+  return ()
 
 cullConstraints :: Set QueryConstraint -> Set QueryConstraint
 cullConstraints = Set.filter (not . isRedundantConstraint)
@@ -110,7 +134,7 @@ getResultTy q = do
 
 getResultColumn :: HasCallStack => SelectField -> TC (ColumnName, Ty)
 getResultColumn (SelectField expr aliasMay) = do
-  let name = fromMaybe "?" $ exprToColumnName expr <|> aliasMay
+  let name = fromMaybe "?" $ aliasMay <|> exprToColumnName expr
   ty <- getExprTy expr
   return (name, ty)
 
@@ -152,8 +176,15 @@ getExprTy (RefE (Just tname) cname) = do
       return $ ColumnRefTy tname' cname
     _ -> do
       return $ ColumnRefTy tname cname
-getExprTy (RefE Nothing _cname) =
-  throwError (TypeErrorNotImplemented "RefE Nothing _")
+getExprTy (RefE Nothing cname) = do
+  knownTables <- gets tceKnownTables
+  case Set.toList knownTables of
+    [tname] -> do
+      addConstraint $ TableExists tname
+      addConstraint $ ColumnExists (ColumnRef tname cname)
+      return $ ColumnRefTy tname cname
+    _ ->
+      throwError (TypeErrorAmbiguousColumn cname)
 getExprTy (ParamE pname) =
   return $ ParamRefTy pname
 getExprTy (UnopE Not e) = do
@@ -199,6 +230,10 @@ resolveTableName tn = do
     Just (TableTabloid n) -> resolveTableName n
     Just t -> return t
 
+addKnownTable :: HasCallStack => TableName -> TC ()
+addKnownTable tb =
+  modify $ \s -> s { tceKnownTables = Set.insert tb $ tceKnownTables s }
+
 addTableAlias :: HasCallStack => TableName -> Tabloid -> TC ()
 addTableAlias a tb =
   modify $ \s -> s { tceTableAliases = Map.insert a tb $ tceTableAliases s }
@@ -211,12 +246,24 @@ addConstraint :: HasCallStack => QueryConstraint -> TC ()
 addConstraint c =
   modify $ \s -> s { tceConstraints = Set.insert c (tceConstraints s) }
 
+getKnownTables :: HasCallStack => SelectFrom -> TC ()
+getKnownTables (SelectFromSingle (TableTabloid tname) _) =
+  addKnownTable tname
+getKnownTables (SelectJoin _ a b _) = do
+  getKnownTables a
+  getKnownTables b
+getKnownTables _ =
+   return ()
+
 getTableAliases :: HasCallStack => SelectFrom -> TC ()
 getTableAliases from =
   case from of
-    SelectFromSingle t (Just alias) -> addTableAlias alias t
-    SelectFromSingle _ _ -> return ()
-    SelectJoin _ a b _ -> getTableAliases a >> getTableAliases b
+    SelectFromSingle t (Just alias) ->
+      addTableAlias alias t
+    SelectFromSingle _ _ ->
+      return ()
+    SelectJoin _ a b _ ->
+      getTableAliases a >> getTableAliases b
 
 getColumnAliases :: HasCallStack => SelectQuery -> TC ()
 getColumnAliases q =

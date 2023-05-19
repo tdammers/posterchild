@@ -52,9 +52,10 @@ selectFromP = label "from" $ do
     joinTail = do
       joinType <- joinTypeP
       rhs <- simpleSourceP
-      void $ string' "ON"
-      whitespaceP
-      cond <- sqlExprP
+      cond <- option (BoolLitE True) $ do
+        void $ string' "ON"
+        whitespaceP
+        sqlExprP
       return $ \lhs ->
         SelectJoin joinType lhs rhs cond
 
