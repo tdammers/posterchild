@@ -1,5 +1,6 @@
 {-# LANGUAGE TemplateHaskell #-}
 {-# LANGUAGE OverloadedStrings #-}
+{-# LANGUAGE OverloadedLists #-}
 
 module Database.Posterchild.Tests.TyCheck
 where
@@ -19,6 +20,9 @@ tests = testGroup "TyCheck"
             , testCase "UnqualifiedColumnNameSingleTable" testSelectUnqualifiedColumnNameSingleTable
             , testCase "UnqualifiedColumnNameAliased" testSelectUnqualifiedColumnNameAliased
             , testCase "UnusedTable" testSelectUnusedTable
+            , testCase "WhereColumnExists" testSelectWhereColumnExists
+            , testCase "Join" testSelectJoin
+            , testCase "SubquerySimple" testSelectSubquerySimple
             ]
           ]
 
@@ -89,5 +93,62 @@ testSelectUnusedTable = do
             ]
         , selectQueryConstraintsTy =
             [ TableExists "tbl"
+            ]
+        }
+
+testSelectWhereColumnExists :: Assertion
+testSelectWhereColumnExists = do
+  testQueryType
+    "SELECT 1 AS a FROM tbl WHERE col = 1"
+    $ Right SelectQueryTy
+        { selectQueryParamsTy =
+            []
+        , selectQueryResultTy =
+            [ ("a", MonoTy SqlSmallIntT)
+            ]
+        , selectQueryConstraintsTy =
+            [ TableExists "tbl"
+            , ColumnExists (ColumnRef "tbl" "col")
+            , EqTypes (ColumnRefTy "tbl" "col") (MonoTy SqlSmallIntT)
+            ]
+        }
+
+testSelectJoin :: Assertion
+testSelectJoin = do
+  testQueryType
+    "SELECT a.foo FROM a INNER JOIN b ON b.a_id = a.id WHERE b.bar = 1"
+    $ Right SelectQueryTy
+        { selectQueryParamsTy =
+            []
+        , selectQueryResultTy =
+            [ ("a.foo", ColumnRefTy "a" "foo")
+            ]
+        , selectQueryConstraintsTy =
+            [ TableExists "a"
+            , TableExists "b"
+            , ColumnExists (ColumnRef "a" "foo")
+            , ColumnExists (ColumnRef "a" "id")
+            , ColumnExists (ColumnRef "b" "a_id")
+            , ColumnExists (ColumnRef "b" "bar")
+            , EqTypes (ColumnRefTy "a" "id") (ColumnRefTy "b" "a_id")
+            , EqTypes (ColumnRefTy "b" "bar") (MonoTy SqlSmallIntT)
+            ]
+        }
+
+testSelectSubquerySimple :: Assertion
+testSelectSubquerySimple = do
+  testQueryType
+    "SELECT a.foo FROM (SELECT foo FROM b WHERE b.id = 1) AS a"
+    $ Right SelectQueryTy
+        { selectQueryParamsTy =
+            []
+        , selectQueryResultTy =
+            [ ("a.foo", ColumnRefTy "a" "foo")
+            ]
+        , selectQueryConstraintsTy =
+            [ TableExists "b"
+            , ColumnExists (ColumnRef "b" "foo")
+            , ColumnExists (ColumnRef "b" "id")
+            , EqTypes (ColumnRefTy "b" "id") (MonoTy SqlSmallIntT)
             ]
         }

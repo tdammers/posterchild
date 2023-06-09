@@ -27,7 +27,21 @@ data QueryConstraint
   | SubtypeOf !Ty !Ty
   | EqTypes !Ty !Ty
   | ComparableTypes !Ty !Ty
-  deriving (Show, Read, Eq, Ord)
+  deriving (Show, Read, Ord)
+
+instance Eq QueryConstraint where
+  x == y = case (x, y) of
+    (TableExists a, TableExists b) -> a == b
+    (ColumnExists a, ColumnExists b) -> a == b
+    (SubtypeOf a b, SubtypeOf c d) -> a == c && b == d
+    (EqTypes a b, EqTypes c d) ->
+      (a == c && b == d) ||
+      (a == d && b == c)
+    (ComparableTypes a b, ComparableTypes c d) ->
+      (a == b && b == d) ||
+      (a == d && b == c)
+    _ -> False
+
 
 data Ty
   = NullTy
@@ -81,7 +95,7 @@ data SelectQueryTy =
   SelectQueryTy
     { selectQueryParamsTy :: [(ParamName, Ty)]
     , selectQueryResultTy :: [(ColumnName, Ty)]
-    , selectQueryConstraintsTy :: [QueryConstraint]
+    , selectQueryConstraintsTy :: Set QueryConstraint
     }
   deriving (Show, Read, Eq)
 
@@ -101,7 +115,7 @@ tcSelectQuery q = do
   return SelectQueryTy
     { selectQueryParamsTy = params
     , selectQueryResultTy = resultTy
-    , selectQueryConstraintsTy = Set.toList constraints
+    , selectQueryConstraintsTy = constraints
     }
 
 getFromConstraints :: SelectFrom -> TC ()
@@ -117,8 +131,9 @@ getTabloidConstraints DualTabloid =
   return ()
 getTabloidConstraints (TableTabloid tableName) =
   addConstraint $ TableExists tableName
-getTabloidConstraints (SubqueryTabloid _) =
-  return ()
+getTabloidConstraints (SubqueryTabloid q) = do
+  subqTy <- tcSelectQuery q
+  addConstraints $ selectQueryConstraintsTy subqTy
 
 cullConstraints :: Set QueryConstraint -> Set QueryConstraint
 cullConstraints = Set.filter (not . isRedundantConstraint)
@@ -245,6 +260,10 @@ addColumnAlias a expr =
 addConstraint :: HasCallStack => QueryConstraint -> TC ()
 addConstraint c =
   modify $ \s -> s { tceConstraints = Set.insert c (tceConstraints s) }
+
+addConstraints :: HasCallStack => Set QueryConstraint -> TC ()
+addConstraints cs =
+  modify $ \s -> s { tceConstraints = Set.union cs (tceConstraints s) }
 
 getKnownTables :: HasCallStack => SelectFrom -> TC ()
 getKnownTables (SelectFromSingle (TableTabloid tname) _) =

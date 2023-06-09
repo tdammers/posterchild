@@ -15,6 +15,7 @@ import Data.HList
 import GHC.Stack (HasCallStack)
 
 import qualified Data.Map as Map
+import qualified Data.Set as Set
 import qualified Data.Text as Text
 import Language.Haskell.TH
 import Text.Casing (pascal)
@@ -148,7 +149,7 @@ mkQueryTy sname sqt = do
       resultRowT = mkQueryResultRowT sname $ selectQueryResultTy sqt
       resultsT = mkQueryResultsT sname $ selectQueryResultTy sqt
   forallT [PlainTV fn SpecifiedSpec | fn <- dname : sname : paramNames ]
-    (concat <$> mapM (mkQueryConstraint sname) (selectQueryConstraintsTy sqt))
+    (concat <$> mapM (mkQueryConstraint sname) (Set.toList $ selectQueryConstraintsTy sqt))
     [t|
       DatabaseDriver $(varT dname)
       => FromTyped $(paramsT) (DriverParams $(varT dname))
