@@ -51,10 +51,16 @@ data Binop
   | NotEquals
   | Less
   | Greater
+  | Plus
+  | Minus
+  | Mult
+  | Div
   deriving (Show, Read, Eq)
 
 data Unop
   = Not
+  | UnaryPlus
+  | UnaryMinus
   deriving (Show, Read, Eq)
 
 data BoolOp

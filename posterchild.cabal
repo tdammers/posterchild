@@ -28,9 +28,6 @@ library
                    , Database.Posterchild.Syntax.SqlTy
                    , Database.Posterchild.Syntax.Schema
                    , Database.Posterchild.Parser
-                   , Database.Posterchild.Parser.Common
-                   , Database.Posterchild.Parser.Select
-                   , Database.Posterchild.Parser.Expr
                    , Database.Posterchild.TH
                    , Database.Posterchild.SchemaConstraints
                    , Data.HList
@@ -48,6 +45,7 @@ library
                  , lift-type >=0.1.1.1 && <0.2
                  , megaparsec >=9.3.0 && <9.4
                  , mtl >=2.3.1 && <2.4
+                 , postgresql-syntax >=0.4.1 && <0.5
                  , template-haskell >=2.19.0 && <2.20
                  , text >=2.0 && <2.1
                  , time >=1.12 && <1.14
