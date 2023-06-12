@@ -9,6 +9,7 @@ where
 
 import Data.String (IsString)
 import Data.Text (Text)
+import qualified Data.Text as Text
 
 newtype SchemaName =
   SchemaName { schemaNameText :: Text }
@@ -23,8 +24,11 @@ newtype ColumnName =
   deriving newtype (Show, Read, Eq, Ord, IsString)
 
 newtype ParamName =
-  ParamName { paramNameText :: Text }
-  deriving newtype (Show, Read, Eq, Ord, IsString)
+  ParamName { paramNameIndex :: Integer }
+  deriving newtype (Show, Read, Eq, Ord)
+
+paramNameText :: ParamName -> Text
+paramNameText (ParamName i) = Text.pack . show $ i
 
 data ColumnRef =
   ColumnRef !TableName !ColumnName

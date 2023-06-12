@@ -240,6 +240,24 @@ SqlSmallSerialT `isSubtypeOf` SqlSerialT = True
 SqlSmallSerialT `isSubtypeOf` SqlBigSerialT = True
 SqlSerialT `isSubtypeOf` SqlBigSerialT = True
 
+SqlBooleanT `isSubtypeOf` SqlNumericT p s =
+  p - s >= 1
+SqlSmallIntT `isSubtypeOf` SqlNumericT p s =
+  p - s >= 5
+SqlIntegerT `isSubtypeOf` SqlNumericT p s =
+  p - s >= 10
+SqlBigIntT `isSubtypeOf` SqlNumericT p s =
+  p - s >= 19
+SqlSmallSerialT `isSubtypeOf` SqlNumericT p s =
+  p - s >= 5
+SqlSerialT `isSubtypeOf` SqlNumericT p s =
+  p - s >= 10
+SqlBigSerialT `isSubtypeOf` SqlNumericT p s =
+  p - s >= 19
+SqlRealT `isSubtypeOf` SqlNumericT p s =
+  p >= 40 && s >= 20
+SqlDoubleT `isSubtypeOf` SqlNumericT p s =
+  p >= 616 && s >= 308
 SqlNumericT p s `isSubtypeOf` SqlNumericT q t =
   p <= q && s <= t
 

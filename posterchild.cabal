@@ -64,6 +64,7 @@ test-suite posterchild-tests
                  , tasty >=1.4.3 && <1.5
                  , tasty-hunit >=0.10.0.3 && <0.11
                  , tasty-quickcheck >=0.10.2 && <0.11
+                 , text >=2.0 && <2.1
 
 executable posterchild
     import:           warnings

@@ -6,7 +6,7 @@
 module Database.Posterchild.TH
 where
 
-import Database.Posterchild.Parser.Select
+import Database.Posterchild.Parser
 import Database.Posterchild.SchemaConstraints
 import Database.Posterchild.Syntax
 import Database.Posterchild.TyCheck
@@ -29,8 +29,8 @@ columnNameLit :: ColumnName -> Q Type
 columnNameLit (ColumnName cname) = litT (strTyLit (Text.unpack cname))
 
 paramName :: ParamName -> Name
-paramName (ParamName pname) =
-  mkName ("p" ++ Text.unpack pname)
+paramName pname =
+  mkName ("p" ++ Text.unpack (paramNameText pname))
 
 paramNameLit :: ParamName -> Q Type
 paramNameLit pname =
@@ -188,7 +188,7 @@ mkSelectQueryBodyExp queryString =
 
 mkSelectQueryDec :: HasCallStack => String -> String -> Q [Dec]
 mkSelectQueryDec fnameStr queryString = do
-  sq <- parseSelect "<<TH>>" queryString
+  sq <- either (error . show) return $ parseSelect "<<TH>>" (Text.pack queryString)
   sqt <- either (error . show) return $ runTC $ tcSelectQuery sq
   let fname = mkName fnameStr
   sname <- newName "schema"

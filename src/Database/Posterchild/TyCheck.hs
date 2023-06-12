@@ -157,8 +157,8 @@ exprToColumnName :: HasCallStack => Expr -> Maybe ColumnName
 exprToColumnName (RefE Nothing cname) = Just cname
 exprToColumnName (RefE (Just (TableName tname)) (ColumnName cname)) =
   Just (ColumnName $ tname <> "." <> cname)
-exprToColumnName (ParamE (ParamName pname)) =
-  Just $ ColumnName pname
+exprToColumnName (ParamE pname) =
+  Just $ ColumnName ("$" <> paramNameText pname)
 exprToColumnName _ = Nothing
 
 getExprTy :: HasCallStack => Expr -> TC Ty
@@ -206,6 +206,14 @@ getExprTy (UnopE Not e) = do
   exprTy <- getExprTy e
   addConstraint $ MonoTy SqlBooleanT `SubtypeOf` exprTy
   return $ MonoTy SqlBooleanT
+getExprTy (UnopE UnaryPlus e) = do
+  exprTy <- getExprTy e
+  addConstraint $ exprTy `SubtypeOf` MonoTy (SqlNumericT 147455 16383)
+  return $ exprTy
+getExprTy (UnopE UnaryMinus e) = do
+  exprTy <- getExprTy e
+  addConstraint $ exprTy `SubtypeOf` MonoTy (SqlNumericT 147455 16383)
+  return $ exprTy
 getExprTy (BinopE op a b)
   | op `elem` ([Equals, NotEquals] :: [Binop])
   = do

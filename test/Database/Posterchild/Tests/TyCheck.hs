@@ -11,7 +11,9 @@ import Test.Tasty.HUnit
 
 import Database.Posterchild.TyCheck
 import Database.Posterchild.Syntax
-import Database.Posterchild.Parser.Select
+import Database.Posterchild.Parser
+
+import qualified Data.Text as Text
 
 tests :: TestTree
 tests = testGroup "TyCheck"
@@ -28,7 +30,7 @@ tests = testGroup "TyCheck"
 
 testQueryType :: String -> Either TypeError SelectQueryTy -> Assertion
 testQueryType sql expected = do
-  sq <- parseSelect sql sql
+  sq <- either (error . show) return $ parseSelect sql (Text.pack sql)
   let actual = runTC $ tcSelectQuery sq
   assertEqual "Query type" expected actual
 
@@ -67,7 +69,7 @@ testSelectUnqualifiedColumnNameSingleTable =
 testSelectUnqualifiedColumnNameAliased :: Assertion
 testSelectUnqualifiedColumnNameAliased =
   testQueryType
-    "SELECT tbl.a AS col FROM tbl INNER JOIN blah"
+    "SELECT tbl.a AS col FROM tbl INNER JOIN blah ON 1"
     $ Right SelectQueryTy
         { selectQueryParamsTy =
             []
