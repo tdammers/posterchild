@@ -53,6 +53,8 @@ data Ty
     -- column
   | ParamRefTy !ParamName
     -- ^ A parameter reference
+  | SumTy !Ty !Ty
+    -- ^ A sum type, inhabited by inhabitants of two subtypes
   deriving (Show, Read, Eq, Ord)
 
 data TCEnv =
@@ -108,8 +110,13 @@ tcSelectQuery q = do
   paramNames <- getParamNames q
   let params = [ (pname, ParamRefTy pname) | pname <- paramNames ]
   resultTy <- getResultTy q
+
   whereTy <- getExprTy (selectWhere q)
   addConstraint $ MonoTy SqlBooleanT `SubtypeOf` whereTy
+
+  havingTy <- getExprTy (selectHaving q)
+  addConstraint $ MonoTy SqlBooleanT `SubtypeOf` havingTy
+
   constraints <- gets (cullConstraints . tceConstraints)
 
   return SelectQueryTy
@@ -141,6 +148,12 @@ cullConstraints = Set.filter (not . isRedundantConstraint)
 isRedundantConstraint :: QueryConstraint -> Bool
 isRedundantConstraint (MonoTy a `SubtypeOf` MonoTy b)
   = a `isSubtypeOf` b
+isRedundantConstraint (a `SubtypeOf` SumTy b c)
+  = isRedundantConstraint (a `SubtypeOf` b)
+  || isRedundantConstraint (a `SubtypeOf` c)
+isRedundantConstraint (SumTy a b `SubtypeOf` c)
+  = isRedundantConstraint (a `SubtypeOf` c)
+  && isRedundantConstraint (b `SubtypeOf` c)
 isRedundantConstraint _ = False
 
 getResultTy :: HasCallStack => SelectQuery -> TC [(ColumnName, Ty)]
@@ -209,11 +222,11 @@ getExprTy (UnopE Not e) = do
 getExprTy (UnopE UnaryPlus e) = do
   exprTy <- getExprTy e
   addConstraint $ exprTy `SubtypeOf` MonoTy (SqlNumericT 147455 16383)
-  return $ exprTy
+  return exprTy
 getExprTy (UnopE UnaryMinus e) = do
   exprTy <- getExprTy e
   addConstraint $ exprTy `SubtypeOf` MonoTy (SqlNumericT 147455 16383)
-  return $ exprTy
+  return exprTy
 getExprTy (BinopE op a b)
   | op `elem` ([Equals, NotEquals] :: [Binop])
   = do
@@ -305,7 +318,8 @@ getParamNames q = do
   pnamesFrom <- getParamNamesInFrom (selectFrom q)
   pnamesFields <- mconcat . Vector.toList <$> Vector.mapM getParamNamesInField (selectFields q)
   pnamesWhere <- getParamNamesInExpr (selectWhere q)
-  return $ pnamesFrom <> pnamesFields <> pnamesWhere
+  pnamesHaving <- getParamNamesInExpr (selectHaving q)
+  return $ pnamesFrom <> pnamesFields <> pnamesWhere <> pnamesHaving
 
 getParamNamesInFrom :: HasCallStack => SelectFrom -> TC [ParamName]
 getParamNamesInFrom (SelectFromSingle t _) =

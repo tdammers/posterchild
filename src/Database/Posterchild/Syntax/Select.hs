@@ -17,6 +17,8 @@ data SelectQuery =
     { selectFrom :: !SelectFrom
     , selectFields :: !(Vector SelectField)
     , selectWhere :: !Expr
+    , selectHaving :: !Expr
+    , selectSort :: !(Vector SelectSort)
     }
   deriving (Show, Read, Eq)
 
@@ -24,6 +26,18 @@ data SelectField =
   SelectField
     { fieldExpr :: !Expr
     , fieldAlias :: !(Maybe ColumnName)
+    }
+  deriving (Show, Read, Eq)
+
+data AscDesc
+  = SortAscending
+  | SortDescending
+  deriving (Show, Read, Eq, Ord, Enum, Bounded)
+
+data SelectSort =
+  SelectSort
+    { sortBy :: !Expr
+    , sortAscDesc :: !AscDesc
     }
   deriving (Show, Read, Eq)
 

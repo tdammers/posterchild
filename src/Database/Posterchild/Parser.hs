@@ -1,3 +1,5 @@
+{-# LANGUAGE OverloadedLists #-}
+
 module Database.Posterchild.Parser
 ( parseSelect
 )
@@ -29,10 +31,26 @@ selectFromPGWP (PG.NoParensSelectWithParens snp) = selectFromPGNP snp
 selectFromPGWP (PG.WithParensSelectWithParens swp) = selectFromPGWP swp
 
 selectFromPGNP :: PG.SelectNoParens -> Either String SelectQuery
-selectFromPGNP (PG.SelectNoParens _with clause _msort _mlimit _mforLocking) =
-  case clause of
+selectFromPGNP (PG.SelectNoParens _with clause msorts _mlimit _mforLocking) = do
+  baseSelect <- case clause of
     Left s -> selectFromPGSimpleSelect s
     Right swp -> selectFromPGWP swp
+  sort <- maybe (return []) sortsFromPG msorts
+  return $ baseSelect { selectSort = sort }
+
+sortsFromPG :: PG.SortClause -> Either String (Vector SelectSort)
+sortsFromPG = fmap Vector.fromList . mapM sortFromPG . NE.toList
+
+sortFromPG :: PG.SortBy -> Either String SelectSort
+sortFromPG PG.UsingSortBy {} =
+  Left "Unsupported: ORDER BY ... USING"
+sortFromPG (PG.AscDescSortBy exprPG mAscDescPG _mNullsOrderPG) = do
+  let ascDesc = case mAscDescPG of
+        Nothing -> SortAscending
+        Just PG.AscAscDesc -> SortAscending
+        Just PG.DescAscDesc -> SortDescending
+  expr <- exprFromPGAExpr exprPG
+  return $ SelectSort expr ascDesc
 
 selectFromPGSimpleSelect :: PG.SimpleSelect -> Either String SelectQuery
 selectFromPGSimpleSelect (PG.TableSimpleSelect {}) =
@@ -41,14 +59,27 @@ selectFromPGSimpleSelect (PG.ValuesSimpleSelect {}) =
   Left "Unsupported: ValuesSimpleSelect"
 selectFromPGSimpleSelect (PG.BinSimpleSelect {}) =
   Left "Unsupported: BinSimpleSelect"
-selectFromPGSimpleSelect (PG.NormalSimpleSelect mTargeting _mInto mFrom mWhere _mGroup _mHaving _mWindow) = do
+selectFromPGSimpleSelect (PG.NormalSimpleSelect mTargeting mInto mFrom mWhere mGroup mHaving mWindow) = do
   from <- maybe (return $ SelectFromSingle DualTabloid Nothing) fromFromPGFrom mFrom
-  fields <- maybe (Left "Unsupported: SELECT without targets") fieldsFromPGTargeting mTargeting
+  fields <- maybe (return []) fieldsFromPGTargeting mTargeting
   where_ <- maybe (return $ BoolLitE True) exprFromPGAExpr mWhere
+  having <- maybe (return $ BoolLitE True) exprFromPGAExpr mHaving
+  case mGroup of
+    Nothing -> return ()
+    Just _ -> Left "Unsupported: GROUP BY"
+  case mInto of
+    Nothing -> return ()
+    Just _ -> Left "Unsupported: SELECT INTO"
+  case mWindow of
+    Nothing -> return ()
+    Just _ -> Left "Unsupported: WINDOW"
+
   return SelectQuery
     { selectFrom = from
     , selectFields = fields
     , selectWhere = where_
+    , selectHaving = having
+    , selectSort = []
     }
 
 fromFromPGFrom :: PG.FromClause -> Either String SelectFrom

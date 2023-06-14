@@ -37,16 +37,18 @@ paramNameLit pname =
   varT $ paramName pname
 
 tyToType :: Name -> Ty -> Q Type
-tyToType _ NullTy =
+tyToType _sname NullTy =
   varT '()
-tyToType _ (MonoTy sqlTy) =
+tyToType _sname (MonoTy sqlTy) =
   conT ''SqlValue `appT` sqlTyToType sqlTy
 tyToType sname (ColumnRefTy tname cname) =
   conT ''TableColumnTy
     `appT` (conT ''SchemaTableTy `appT` varT sname `appT` tableNameLit tname)
     `appT` columnNameLit cname
-tyToType _ (ParamRefTy pname) =
+tyToType _sname (ParamRefTy pname) =
   paramNameLit pname
+tyToType sname (SumTy a b) =
+  conT ''Either `appT` tyToType sname a `appT` tyToType sname b
 
 sqlTyToType :: SqlTy -> Q Type
 sqlTyToType SqlSmallIntT = conT 'SqlSmallIntT
