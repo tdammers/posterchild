@@ -1,4 +1,3 @@
-{-# LANGUAGE TemplateHaskell #-}
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE OverloadedLists #-}
 
@@ -24,6 +23,7 @@ tests = testGroup "TyCheck"
             , testCase "UnusedTable" testSelectUnusedTable
             , testCase "WhereColumnExists" testSelectWhereColumnExists
             , testCase "Join" testSelectJoin
+            , testCase "GroupBy" testSelectGroupBy
             , testCase "SubquerySimple" testSelectSubquerySimple
             ]
           ]
@@ -38,6 +38,22 @@ testSelectSimple :: Assertion
 testSelectSimple =
   testQueryType
     "SELECT tbl.col FROM tbl"
+    $ Right SelectQueryTy
+        { selectQueryParamsTy =
+            []
+        , selectQueryResultTy =
+            [ ("tbl.col", ColumnRefTy "tbl" "col")
+            ]
+        , selectQueryConstraintsTy =
+            [ TableExists "tbl"
+            , ColumnExists (ColumnRef "tbl" "col")
+            ]
+        }
+
+testSelectGroupBy :: Assertion
+testSelectGroupBy =
+  testQueryType
+    "SELECT tbl.col FROM tbl GROUP BY tbl.col"
     $ Right SelectQueryTy
         { selectQueryParamsTy =
             []

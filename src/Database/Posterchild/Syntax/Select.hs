@@ -12,11 +12,14 @@ import Data.Vector (Vector)
 
 import Database.Posterchild.Syntax.Common
 
+-- TODO: figure out how to represent UNION / INTERSECT queries.
+
 data SelectQuery =
   SelectQuery
     { selectFrom :: !SelectFrom
     , selectFields :: !(Vector SelectField)
     , selectWhere :: !Expr
+    , selectGroupBy :: !(Vector SelectGroupItem)
     , selectHaving :: !Expr
     , selectSort :: !(Vector SelectSort)
     }
@@ -27,6 +30,10 @@ data SelectField =
     { fieldExpr :: !Expr
     , fieldAlias :: !(Maybe ColumnName)
     }
+  deriving (Show, Read, Eq)
+
+data SelectGroupItem
+  = GroupByExpr !Expr
   deriving (Show, Read, Eq)
 
 data AscDesc

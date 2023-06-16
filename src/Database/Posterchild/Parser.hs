@@ -14,7 +14,6 @@ import Data.Text (Text)
 import Data.Vector (Vector)
 import qualified Data.Vector as Vector
 import Data.List (foldl')
-import Debug.Trace
 
 parseSelect :: String -> Text -> Either String SelectQuery
 parseSelect _sourceName input = do
@@ -52,6 +51,16 @@ sortFromPG (PG.AscDescSortBy exprPG mAscDescPG _mNullsOrderPG) = do
   expr <- exprFromPGAExpr exprPG
   return $ SelectSort expr ascDesc
 
+groupByFromPG :: PG.GroupClause -> Either String (Vector SelectGroupItem)
+groupByFromPG items =
+  Vector.fromList <$> mapM groupByItemFromPG (NE.toList items)
+
+groupByItemFromPG :: PG.GroupByItem -> Either String SelectGroupItem
+groupByItemFromPG (PG.ExprGroupByItem e) =
+  GroupByExpr <$> exprFromPGAExpr e
+groupByItemFromPG x =
+  Left $ "Unsupported: " ++ show x
+
 selectFromPGSimpleSelect :: PG.SimpleSelect -> Either String SelectQuery
 selectFromPGSimpleSelect (PG.TableSimpleSelect {}) =
   Left "Unsupported: TableSimpleSelect"
@@ -64,9 +73,8 @@ selectFromPGSimpleSelect (PG.NormalSimpleSelect mTargeting mInto mFrom mWhere mG
   fields <- maybe (return []) fieldsFromPGTargeting mTargeting
   where_ <- maybe (return $ BoolLitE True) exprFromPGAExpr mWhere
   having <- maybe (return $ BoolLitE True) exprFromPGAExpr mHaving
-  case mGroup of
-    Nothing -> return ()
-    Just _ -> Left "Unsupported: GROUP BY"
+  groupBy <- maybe (return []) groupByFromPG mGroup
+      
   case mInto of
     Nothing -> return ()
     Just _ -> Left "Unsupported: SELECT INTO"
@@ -78,6 +86,7 @@ selectFromPGSimpleSelect (PG.NormalSimpleSelect mTargeting mInto mFrom mWhere mG
     { selectFrom = from
     , selectFields = fields
     , selectWhere = where_
+    , selectGroupBy = groupBy
     , selectHaving = having
     , selectSort = []
     }
@@ -102,7 +111,6 @@ fromFromPGTableRef (PG.RelationExprTableRef relE mAlias Nothing) = do
 fromFromPGTableRef (PG.JoinTableRef joinedTable mAlias) = do
   (method, left, right, cond) <- joinFromPGJoin joinedTable
   _alias <- mTableAliasFromMaybePGAlias mAlias
-  traceShowM _alias
   return $ SelectJoin method left right cond
 fromFromPGTableRef (PG.SelectTableRef _lateral swp mAlias) = do
   alias <- mTableAliasFromMaybePGAlias mAlias
@@ -196,6 +204,14 @@ exprFromPGAExpr (PG.SymbolicBinOpAExpr lhsPG opPG rhsPG) = do
   rhs <- exprFromPGAExpr rhsPG
   op <- binopFromPG opPG
   return $ BinopE op lhs rhs
+exprFromPGAExpr (PG.AndAExpr lhsPG rhsPG) = do
+  lhs <- exprFromPGAExpr lhsPG
+  rhs <- exprFromPGAExpr rhsPG
+  return $ FoldE All [lhs, rhs]
+exprFromPGAExpr (PG.OrAExpr lhsPG rhsPG) = do
+  lhs <- exprFromPGAExpr lhsPG
+  rhs <- exprFromPGAExpr rhsPG
+  return $ FoldE Any [lhs, rhs]
 exprFromPGAExpr x =
   Left $ "Unsupported: " ++ show x
 
@@ -207,6 +223,9 @@ exprFromPGCExpr (PG.ColumnrefCExpr (PG.Columnref tblID (Just (indirection :| [])
     PG.AttrNameIndirectionEl colID ->
       RefE <$> (Just . TableName <$> textFromIdent tblID) <*> (ColumnName <$> textFromIdent colID)
     x -> Left $ "Unsupported: " ++ show x
+
+exprFromPGCExpr (PG.ParamCExpr i Nothing) =
+  return $ ParamE (ParamName $ fromIntegral i)
 
 exprFromPGCExpr (PG.AexprConstCExpr (PG.IAexprConst n)) =
   return $ IntLitE $ toInteger n

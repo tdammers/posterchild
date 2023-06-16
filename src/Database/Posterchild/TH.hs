@@ -61,7 +61,8 @@ sqlTyToType SqlSmallSerialT = conT 'SqlSmallSerialT
 sqlTyToType SqlSerialT = conT 'SqlSerialT
 sqlTyToType SqlBigSerialT = conT 'SqlBigSerialT
 sqlTyToType SqlMoneyT = conT 'SqlMoneyT
-sqlTyToType _ = error "Not implemented"
+sqlTyToType SqlBooleanT = conT 'SqlBooleanT
+sqlTyToType t = error $ "Not implemented: " ++ show t
 
 -- sqlTyToType (SqlVarChar :: forall l. !Text -> SqlValue (SqlVarCharT (l :: Natural))
 -- sqlTyToType (SqlChar :: forall l. !Text -> SqlValue (SqlCharT (l :: Natural))
@@ -190,7 +191,7 @@ mkSelectQueryBodyExp queryString =
 
 mkSelectQueryDec :: HasCallStack => String -> String -> Q [Dec]
 mkSelectQueryDec fnameStr queryString = do
-  sq <- either (error . show) return $ parseSelect "<<TH>>" (Text.pack queryString)
+  sq <- either error return $ parseSelect "<<TH>>" (Text.pack queryString)
   sqt <- either (error . show) return $ runTC $ tcSelectQuery sq
   let fname = mkName fnameStr
   sname <- newName "schema"
