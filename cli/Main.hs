@@ -15,6 +15,7 @@ import Text.Printf
 import Language.Haskell.TH (runQ, pprint)
 import Database.HDBC.PostgreSQL (Connection)
 import Data.Proxy
+import qualified Data.Text as Text
 
 import Database.Posterchild
 import Database.Posterchild.SchemaConstraints
@@ -36,7 +37,7 @@ main :: IO ()
 main = do
   putStrLn "--- input ---"
   putStrLn queryStr
-  query <- parseSelect "<<QUERY>>" queryStr
+  query <- either error return $ parseSelect "<<QUERY>>" (Text.pack queryStr)
   putStrLn "--- AST ---"
   print query
   queryT <- either (error . show) return $ runTC $ tcSelectQuery query
