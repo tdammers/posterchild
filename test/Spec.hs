@@ -1,4 +1,4 @@
-module Spec
+module Main
 where
 
 import Test.Tasty

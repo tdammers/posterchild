@@ -40,7 +40,7 @@ tyToType :: Name -> Ty -> Q Type
 tyToType _sname NullTy =
   varT '()
 tyToType _sname (MonoTy sqlTy) =
-  conT ''SqlValue `appT` sqlTyToType sqlTy
+  conT ''SqlValue `appT` mkSqlTy sqlTy
 tyToType sname (ColumnRefTy tname cname) =
   conT ''TableColumnTy
     `appT` (conT ''SchemaTableTy `appT` varT sname `appT` tableNameLit tname)
@@ -50,60 +50,72 @@ tyToType _sname (ParamRefTy pname) =
 tyToType sname (SumTy a b) =
   conT ''Either `appT` tyToType sname a `appT` tyToType sname b
 
-sqlTyToType :: SqlTy -> Q Type
-sqlTyToType SqlSmallIntT = conT 'SqlSmallIntT
-sqlTyToType SqlIntegerT = conT 'SqlIntegerT
-sqlTyToType SqlBigIntT = conT 'SqlBigIntT
-sqlTyToType (SqlNumericT p s) = conT 'SqlNumericT `appT` litT (numTyLit $ fromIntegral p) `appT` litT (numTyLit $ fromIntegral s)
-sqlTyToType SqlRealT = conT 'SqlRealT 
-sqlTyToType SqlDoubleT = conT 'SqlDoubleT
-sqlTyToType SqlSmallSerialT = conT 'SqlSmallSerialT
-sqlTyToType SqlSerialT = conT 'SqlSerialT
-sqlTyToType SqlBigSerialT = conT 'SqlBigSerialT
-sqlTyToType SqlMoneyT = conT 'SqlMoneyT
-sqlTyToType SqlBooleanT = conT 'SqlBooleanT
-sqlTyToType t = error $ "Not implemented: " ++ show t
+mkSqlTy :: SqlTy -> Q Type
+mkSqlTy SqlSmallIntT = conT 'SqlSmallIntT
+mkSqlTy SqlIntegerT = conT 'SqlIntegerT
+mkSqlTy SqlBigIntT = conT 'SqlBigIntT
+mkSqlTy (SqlNumericT p s) = conT 'SqlNumericT `appT` liftNat p `appT` liftNat s
+mkSqlTy SqlRealT = conT 'SqlRealT 
+mkSqlTy SqlDoubleT = conT 'SqlDoubleT
+mkSqlTy SqlSmallSerialT = conT 'SqlSmallSerialT
+mkSqlTy SqlSerialT = conT 'SqlSerialT
+mkSqlTy SqlBigSerialT = conT 'SqlBigSerialT
+mkSqlTy SqlMoneyT = conT 'SqlMoneyT
+mkSqlTy SqlBooleanT = conT 'SqlBooleanT
 
--- sqlTyToType (SqlVarChar :: forall l. !Text -> SqlValue (SqlVarCharT (l :: Natural))
--- sqlTyToType (SqlChar :: forall l. !Text -> SqlValue (SqlCharT (l :: Natural))
--- sqlTyToType (SqlText :: !Text -> SqlValue SqlTextT
--- sqlTyToType (SqlBlob :: !ByteString -> SqlValue SqlBlobT
--- sqlTyToType (SqlTimestamp :: forall p. !LocalTime -> SqlValue (SqlTimestampT (p :: Natural))
--- sqlTyToType (SqlTimestampWithTimeZone :: forall p. !LocalTimeWithTimezone -> SqlValue (SqlTimestampWithTimeZoneT (p :: Natural))
--- sqlTyToType (SqlDate :: !Day -> SqlValue SqlDateT
--- sqlTyToType (SqlTime :: forall p. !TimeOfDay -> SqlValue (SqlTimeT (p :: Natural))
--- sqlTyToType (SqlTimeWithTimeZone :: forall p. !TimeOfDayWithTimezone -> SqlValue (SqlTimeWithTimeZoneT (p :: Natural))
--- sqlTyToType (SqlInterval :: forall fields p. SqlValue (SqlIntervalT (fields :: SqlIntervalFields) (p :: Natural))
--- sqlTyToType (SqlBoolean :: !Bool -> SqlValue SqlBooleanT
--- sqlTyToType (SqlNamedEnum :: !Int -> SqlValue SqlNamedEnumT
--- sqlTyToType (
--- sqlTyToType (SqlBit :: forall l. !BitArray -> SqlValue (SqlBitT (l :: Natural))
--- sqlTyToType (SqlBitVarying :: forall l. !BitArray -> SqlValue (SqlBitVaryingT (l :: Maybe Natural))
--- sqlTyToType (
--- sqlTyToType (SqlArray :: forall (a :: SqlTy) l. !(Vector (SqlValue a)) -> SqlValue (SqlArrayT a (l :: Maybe Natural))
--- sqlTyToType (
--- sqlTyToType (-- TODO: deal with these
--- sqlTyToType (-- SqlPoint :: -> SqlValue SqlPointT
--- sqlTyToType (-- SqlLine :: -> SqlValue SqlLineT
--- sqlTyToType (-- SqlLSeg :: -> SqlValue SqlLSegT
--- sqlTyToType (-- SqlBox :: -> SqlValue SqlBoxT
--- sqlTyToType (-- SqlPath :: -> SqlValue SqlPathT
--- sqlTyToType (-- SqlPolygon :: -> SqlValue SqlPolygonT
--- sqlTyToType (-- SqlCircle :: -> SqlValue SqlCircleT
--- sqlTyToType (-- SqlCIDR :: -> SqlValue SqlCIDRT
--- sqlTyToType (-- SqlINET :: -> SqlValue SqlINETT
--- sqlTyToType (-- SqlMacAddr :: -> SqlValue SqlMacAddrT
--- sqlTyToType (-- SqlMacAddr8 :: -> SqlValue SqlMacAddr8T
--- sqlTyToType (-- SqlTextSearchVector :: -> SqlValue SqlTextSearchVectorT
--- sqlTyToType (-- SqlTextSearchQuery :: -> SqlValue SqlTextSearchQueryT
--- sqlTyToType (-- SqlUUID :: -> SqlValue SqlUUIDT
--- sqlTyToType (-- SqlXML :: -> SqlValue SqlXMLT
--- sqlTyToType (-- SqlJSON :: -> SqlValue SqlJSONT
--- sqlTyToType (-- SqlJSONB :: -> SqlValue SqlJSONBT
--- sqlTyToType (
--- sqlTyToType (-- TODO: can we represent this?
--- sqlTyToType (-- SqlAny :: ? -> SqlValue SqlAnyT
+mkSqlTy (SqlVarCharT l) = conT 'SqlVarCharT `appT` liftNat l
+mkSqlTy (SqlCharT l) = conT 'SqlCharT `appT` liftNat l
+mkSqlTy SqlTextT = conT 'SqlTextT
+mkSqlTy SqlBlobT = conT 'SqlBlobT
+mkSqlTy (SqlTimestampT p) = conT 'SqlTimestampT `appT` liftNat p
+mkSqlTy (SqlTimestampWithTimeZoneT p) = conT 'SqlTimestampWithTimeZoneT `appT` liftNat p
+mkSqlTy SqlDateT = conT 'SqlDateT
+mkSqlTy (SqlTimeT p) = conT 'SqlTimeT `appT` liftNat p
+mkSqlTy (SqlTimeWithTimeZoneT p) = conT 'SqlTimeWithTimeZoneT `appT` liftNat p
+mkSqlTy (SqlIntervalT fields p) =
+  conT 'SqlIntervalT `appT` liftIntervalFields fields `appT` liftNat p
+mkSqlTy SqlNamedEnumT = conT 'SqlNamedEnumT
 
+mkSqlTy (SqlBitT l) = conT 'SqlBitT `appT` liftNat l
+mkSqlTy (SqlBitVaryingT l) = conT 'SqlBitVaryingT `appT` liftMaybeNat l
+
+mkSqlTy (SqlArrayT t l) = conT 'SqlArrayT `appT` mkSqlTy t `appT` liftMaybeNat l
+mkSqlTy SqlPointT = conT 'SqlPointT
+mkSqlTy SqlLineT = conT 'SqlLineT
+mkSqlTy SqlLSegT = conT 'SqlLSegT
+mkSqlTy SqlBoxT = conT 'SqlBoxT
+mkSqlTy SqlPathT = conT 'SqlPathT
+mkSqlTy SqlPolygonT = conT 'SqlPolygonT
+mkSqlTy SqlCircleT = conT 'SqlCircleT
+mkSqlTy SqlCIDRT = conT 'SqlCIDRT
+mkSqlTy SqlINETT = conT 'SqlINETT
+mkSqlTy SqlMacAddrT = conT 'SqlMacAddrT
+mkSqlTy SqlMacAddr8T = conT 'SqlMacAddr8T
+mkSqlTy SqlTextSearchVectorT = conT 'SqlTextSearchVectorT
+mkSqlTy SqlTextSearchQueryT = conT 'SqlTextSearchQueryT
+mkSqlTy SqlUUIDT = conT 'SqlUUIDT
+mkSqlTy SqlXMLT = conT 'SqlXMLT
+mkSqlTy SqlJSONT = conT 'SqlJSONT
+mkSqlTy SqlJSONBT = conT 'SqlJSONBT
+mkSqlTy SqlAnyT = conT 'SqlAnyT
+
+-- mkSqlTy t = error $ "Not implemented: " ++ show t
+
+liftIntervalFields :: SqlIntervalFields -> Q Type
+liftIntervalFields AllIntervalFields = conT 'AllIntervalFields
+liftIntervalFields YearIntervalField = conT 'YearIntervalField
+liftIntervalFields MonthIntervalField = conT 'MonthIntervalField
+liftIntervalFields DayIntervalField = conT 'DayIntervalField
+liftIntervalFields HourIntervalField = conT 'HourIntervalField
+liftIntervalFields MinuteIntervalField = conT 'MinuteIntervalField
+liftIntervalFields SecondIntervalField = conT 'SecondIntervalField
+liftIntervalFields YearToMonthIntervalFields = conT 'YearToMonthIntervalFields
+liftIntervalFields DayToHourIntervalFields = conT 'DayToHourIntervalFields
+liftIntervalFields DayToMinuteIntervalFields = conT 'DayToMinuteIntervalFields
+liftIntervalFields DayToSecondIntervalFields = conT 'DayToSecondIntervalFields
+liftIntervalFields HourToMinuteIntervalFields = conT 'HourToMinuteIntervalFields
+liftIntervalFields HourToSecondIntervalFields = conT 'HourToSecondIntervalFields
+liftIntervalFields MinuteToSecondIntervalFields = conT 'MinuteToSecondIntervalFields
 
 mkQueryConstraint :: Name -> QueryConstraint -> Q [Type]
 mkQueryConstraint sname (TableExists tname) =
@@ -245,64 +257,3 @@ liftMaybe f (Just x) = conT 'Just `appT` f x
 
 liftMaybeNat :: Maybe Natural -> Q Type
 liftMaybeNat = liftMaybe liftNat
-
-mkSqlTy :: SqlTy -> Q Type
-mkSqlTy SqlAnyT = conT 'SqlAnyT
-mkSqlTy (SqlArrayT t ml) = conT 'SqlArrayT `appT` mkSqlTy t `appT` liftMaybeNat ml
-mkSqlTy SqlBigIntT = conT 'SqlBigIntT
-mkSqlTy SqlBigSerialT = conT 'SqlBigSerialT 
-mkSqlTy (SqlBitT n) = conT 'SqlBitT `appT` liftNat n
-mkSqlTy (SqlBitVaryingT ml) = conT 'SqlBitVaryingT `appT` liftMaybeNat ml
-mkSqlTy SqlBlobT = conT 'SqlBlobT 
-mkSqlTy SqlBooleanT = conT 'SqlBooleanT 
-mkSqlTy SqlBoxT = conT 'SqlBoxT 
-mkSqlTy (SqlCharT s) = conT 'SqlCharT `appT` liftNat s
-mkSqlTy SqlCIDRT = conT 'SqlCIDRT 
-mkSqlTy SqlCircleT = conT 'SqlCircleT 
-mkSqlTy SqlDateT = conT 'SqlDateT 
-mkSqlTy SqlDoubleT = conT 'SqlDoubleT 
-mkSqlTy SqlINETT = conT 'SqlINETT 
-mkSqlTy SqlIntegerT = conT 'SqlIntegerT 
-mkSqlTy (SqlIntervalT fields p) = conT 'SqlIntervalT `appT` liftIntervalFields fields `appT` liftNat p
-mkSqlTy SqlJSONBT = conT 'SqlJSONBT 
-mkSqlTy SqlJSONT = conT 'SqlJSONT 
-mkSqlTy SqlLineT = conT 'SqlLineT 
-mkSqlTy SqlLSegT = conT 'SqlLSegT 
-mkSqlTy SqlMacAddr8T = conT 'SqlMacAddr8T 
-mkSqlTy SqlMacAddrT = conT 'SqlMacAddrT 
-mkSqlTy SqlMoneyT = conT 'SqlMoneyT 
-mkSqlTy SqlNamedEnumT = conT 'SqlNamedEnumT 
-mkSqlTy (SqlNumericT p s) = conT 'SqlNumericT `appT` liftNat p `appT` liftNat s
-mkSqlTy SqlPathT = conT 'SqlPathT 
-mkSqlTy SqlPointT = conT 'SqlPointT 
-mkSqlTy SqlPolygonT = conT 'SqlPolygonT 
-mkSqlTy SqlRealT = conT 'SqlRealT 
-mkSqlTy SqlSerialT = conT 'SqlSerialT 
-mkSqlTy SqlSmallIntT = conT 'SqlSmallIntT 
-mkSqlTy SqlSmallSerialT = conT 'SqlSmallSerialT 
-mkSqlTy SqlTextSearchQueryT = conT 'SqlTextSearchQueryT 
-mkSqlTy SqlTextSearchVectorT = conT 'SqlTextSearchVectorT 
-mkSqlTy SqlTextT = conT 'SqlTextT 
-mkSqlTy (SqlTimestampT p) = conT 'SqlTimestampT `appT` liftNat p
-mkSqlTy (SqlTimestampWithTimeZoneT p) = conT 'SqlTimestampWithTimeZoneT `appT` liftNat p
-mkSqlTy (SqlTimeT p) = conT 'SqlTimeT `appT` liftNat p
-mkSqlTy (SqlTimeWithTimeZoneT p) = conT 'SqlTimeWithTimeZoneT `appT` liftNat p
-mkSqlTy SqlUUIDT = conT 'SqlUUIDT 
-mkSqlTy (SqlVarCharT s) = conT 'SqlVarCharT `appT` liftNat s
-mkSqlTy SqlXMLT = conT 'SqlXMLT 
-
-liftIntervalFields :: SqlIntervalFields -> Q Type
-liftIntervalFields AllIntervalFields = conT 'AllIntervalFields
-liftIntervalFields YearIntervalField = conT 'YearIntervalField
-liftIntervalFields MonthIntervalField = conT 'MonthIntervalField
-liftIntervalFields DayIntervalField = conT 'DayIntervalField
-liftIntervalFields HourIntervalField = conT 'HourIntervalField
-liftIntervalFields MinuteIntervalField = conT 'MinuteIntervalField
-liftIntervalFields SecondIntervalField = conT 'SecondIntervalField
-liftIntervalFields YearToMonthIntervalFields = conT 'YearToMonthIntervalFields
-liftIntervalFields DayToHourIntervalFields = conT 'DayToHourIntervalFields
-liftIntervalFields DayToMinuteIntervalFields = conT 'DayToMinuteIntervalFields
-liftIntervalFields DayToSecondIntervalFields = conT 'DayToSecondIntervalFields
-liftIntervalFields HourToMinuteIntervalFields = conT 'HourToMinuteIntervalFields
-liftIntervalFields HourToSecondIntervalFields = conT 'HourToSecondIntervalFields
-liftIntervalFields MinuteToSecondIntervalFields = conT 'MinuteToSecondIntervalFields

@@ -43,7 +43,7 @@ main = do
   queryT <- either (error . show) return $ runTC $ tcSelectQuery query
   putStrLn "--- params ---"
   forM_ (selectQueryParamsTy queryT) $ \(ParamName name, ty) ->
-    printf "$%s : %s\n" name (show ty)
+    printf "$%i : %s\n" name (show ty)
   putStrLn "--- result type ---"
   forM_ (selectQueryResultTy queryT) $ \(ColumnName name, ty) ->
     printf "%s : %s\n" name (show ty)
