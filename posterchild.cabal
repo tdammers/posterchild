@@ -11,7 +11,7 @@ maintainer:         tdammers@gmail.com
 category:           Database
 build-type:         Simple
 -- extra-doc-files:
--- extra-source-files:
+extra-source-files: test-src/*.hs
 
 common warnings
     ghc-options: -Wall
@@ -63,10 +63,13 @@ test-suite posterchild-tests
     hs-source-dirs: test
     main-is: Spec.hs
     other-modules: Database.Posterchild.Tests.TyCheck
+                 , Database.Posterchild.Tests.TH
+                 , Database.Posterchild.Tests.Util
     build-depends: posterchild
                  , tasty >=1.4.3 && <1.5
                  , tasty-hunit >=0.10.0.3 && <0.11
                  , tasty-quickcheck >=0.10.2 && <0.11
+                 , process >=1.6.17.0 && <1.7
 
 executable posterchild
     import: warnings
