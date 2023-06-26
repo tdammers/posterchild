@@ -27,6 +27,12 @@ typedQuery :: ( DatabaseDriver driver
 typedQuery driver queryString typedParams =
   fromUntypedM =<< driverQuery driver queryString (fromTyped typedParams)
 
+-- * Conversions between typed values and \"untyped\" values
+-- Untyped values are represented by a unitype (such as HDBC's @SqlValue@), and
+-- that unitype should generally cover all possible typed values that may be
+-- converted to the unitype, hence the 'FromTyped' class does not support
+-- conversion failures, whereas 'FromUntyped' does.
+
 class FromTyped typed untyped where
   fromTyped :: typed -> untyped
 
