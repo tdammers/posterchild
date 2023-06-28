@@ -14,19 +14,19 @@ selectSightingsByUserQS =
   "    on s.user_id = u.id \n" ++
   "  inner join species as sp \n" ++
   "    on s.species_id = sp.id \n" ++
-  "  left join species_name as spn \n" ++
-  "    on spn.species_id = sp.id \n" ++
-  "       and spn.language = $2\n" ++
+  "  left join species_names as spn " ++
+  "    on (spn.species_id = sp.id) " ++
+  "       and (spn.language = $2)" ++
   "  where u.username = $1"
 
 birdtrackerSchema :: Schema
 birdtrackerSchema =
     Schema
       "birdtracker"
-      [ ( "user"
+      [ ( "users"
         , Table
             { tableColumns =
-                [ Column "id" SqlIntegerT NotNull
+                [ Column "id" SqlSerialT NotNull
                 , Column "username" SqlTextT NotNull
                 , Column "password" SqlBlobT Null
                 ]
@@ -38,7 +38,7 @@ birdtrackerSchema =
       , ( "species"
         , Table
             { tableColumns =
-                [ Column "id" SqlIntegerT NotNull
+                [ Column "id" SqlSerialT NotNull
                 , Column "scientific_name" SqlTextT NotNull
                 ]
             , tableConstraints =
@@ -46,11 +46,11 @@ birdtrackerSchema =
                 ]
             }
         )
-      , ( "species_name"
+      , ( "species_names"
         , Table
             { tableColumns =
-                [ Column "id" SqlIntegerT NotNull
-                , Column "species_id" SqlIntegerT NotNull
+                [ Column "id" SqlSerialT NotNull
+                , Column "species_id" SqlSerialT NotNull
                 , Column "language" SqlTextT NotNull
                 , Column "name" SqlTextT NotNull
                 ]
@@ -63,12 +63,12 @@ birdtrackerSchema =
                 ]
             }
         )
-      , ( "sighting"
+      , ( "sightings"
         , Table
             { tableColumns =
-                [ Column "id" SqlIntegerT NotNull
-                , Column "species_id" SqlIntegerT NotNull
-                , Column "user_id" SqlIntegerT NotNull
+                [ Column "id" SqlSerialT NotNull
+                , Column "species_id" SqlSerialT NotNull
+                , Column "user_id" SqlSerialT NotNull
                 , Column "timestamp" (SqlTimestampWithTimeZoneT 6) NotNull
                 ]
             , tableConstraints =

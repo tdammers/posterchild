@@ -80,6 +80,7 @@ executable posterchild
     build-depends: base ^>=4.17.0.0
                  , posterchild
                  , containers >=0.6 && <0.7
+                 , text >=2.0 && <2.1
                  , vector >=0.13 && <0.14
                  , template-haskell >=2.19.0 && <2.20
                  , HDBC >=2.4.0.4 && <2.5

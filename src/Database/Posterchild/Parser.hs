@@ -212,12 +212,17 @@ exprFromPGAExpr (PG.OrAExpr lhsPG rhsPG) = do
   lhs <- exprFromPGAExpr lhsPG
   rhs <- exprFromPGAExpr rhsPG
   return $ FoldE Any [lhs, rhs]
+exprFromPGAExpr (PG.NotAExpr exprPG) = do
+  expr <- exprFromPGAExpr exprPG
+  return $ UnopE Not expr
 exprFromPGAExpr x =
   Left $ "Unsupported: " ++ show x
 
 exprFromPGCExpr :: PG.CExpr -> Either String Expr
 exprFromPGCExpr (PG.ColumnrefCExpr (PG.Columnref colID Nothing)) = do
   RefE Nothing . ColumnName <$> textFromIdent colID
+exprFromPGCExpr (PG.InParensCExpr e Nothing) =
+  exprFromPGAExpr e
 exprFromPGCExpr (PG.ColumnrefCExpr (PG.Columnref tblID (Just (indirection :| [])))) = do
   case indirection of
     PG.AttrNameIndirectionEl colID ->
@@ -229,6 +234,9 @@ exprFromPGCExpr (PG.ParamCExpr i Nothing) =
 
 exprFromPGCExpr (PG.AexprConstCExpr (PG.IAexprConst n)) =
   return $ IntLitE $ toInteger n
+
+exprFromPGCExpr (PG.ParamCExpr n Nothing) =
+  return $ ParamE . ParamName $ fromIntegral n
 
 exprFromPGCExpr x =
   Left $ "Unsupported: " ++ show x

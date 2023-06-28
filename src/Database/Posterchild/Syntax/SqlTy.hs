@@ -303,6 +303,10 @@ instance IsSubtypeOf (SqlValue SqlBooleanT) (SqlValue SqlIntegerT) where
   upcast (SqlBoolean v) = SqlInteger (fromIntegral $ fromEnum v)
 instance IsSubtypeOf (SqlValue SqlBooleanT) (SqlValue SqlBigIntT) where
   upcast (SqlBoolean v) = SqlBigInt (fromIntegral $ fromEnum v)
+instance IsSubtypeOf (SqlValue SqlBooleanT) (SqlValue SqlSerialT) where
+  upcast (SqlBoolean v) = SqlSerial (fromIntegral $ fromEnum v)
+instance IsSubtypeOf (SqlValue SqlBooleanT) (SqlValue SqlBigSerialT) where
+  upcast (SqlBoolean v) = SqlBigSerial (fromIntegral $ fromEnum v)
 
 instance IsSubtypeOf (SqlValue SqlSmallIntT) (SqlValue SqlIntegerT) where
   upcast (SqlSmallInt v) = SqlInteger (fromIntegral v)

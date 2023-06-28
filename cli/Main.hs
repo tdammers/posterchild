@@ -1,3 +1,5 @@
+{-# OPTIONS_GHC -Wno-unused-imports #-}
+
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE OverloadedLists #-}
 {-# LANGUAGE TemplateHaskell #-}
@@ -15,6 +17,7 @@ import Text.Printf
 import Language.Haskell.TH (runQ, pprint)
 import Database.HDBC.PostgreSQL (Connection)
 import Data.Proxy
+import Data.Text (Text)
 import qualified Data.Text as Text
 
 import Database.Posterchild
